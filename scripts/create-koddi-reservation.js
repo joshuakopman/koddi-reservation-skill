@@ -19,6 +19,11 @@ let TOTAL_IMPRESSIONS = Number(process.env.TOTAL_IMPRESSIONS || 0);
 const KEEP_BROWSER_OPEN = process.env.KEEP_BROWSER_OPEN !== '0';
 const SLOW_MO = Number(process.env.SLOW_MO || 0);
 const DEBUG_KEYWORD_FAILURES = process.env.DEBUG_KEYWORD_FAILURES === '1';
+const PROFILE_FALLBACK = process.env.PLAYWRIGHT_PROFILE_FALLBACK === '1';
+const TARGETING_SETTLE_MS = Number(process.env.TARGETING_SETTLE_MS || 350);
+const COUNTRY_PICK_DELAY_MS = Number(process.env.COUNTRY_PICK_DELAY_MS || 250);
+const ATTRIBUTE_LOAD_WAIT_MS = Number(process.env.ATTRIBUTE_LOAD_WAIT_MS || 450);
+const TARGETING_GROUP_STEP_DELAY_MS = Number(process.env.TARGETING_GROUP_STEP_DELAY_MS || 500);
 const DEFAULT_COUNTRIES = ['United States'];
 const DEFAULT_AD_TYPES = ['API: GIF'];
 const DEFAULT_POSITIONS = ['Position 1'];
@@ -162,13 +167,13 @@ async function applyCampaignOverrides() {
 }
 
 async function launchBrowserContext() {
-  if (CLEAR_SINGLETON_LOCKS) {
-    const staleLockNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'RunningChromeVersion'];
+  const staleLockNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'RunningChromeVersion'];
+  const clearLocks = async (profileDir) => {
     for (const name of staleLockNames) {
-      const p = path.join(PROFILE_DIR, name);
+      const p = path.join(profileDir, name);
       await fs.unlink(p).catch(() => null);
     }
-  }
+  };
 
   const base = {
     headless: false,
@@ -186,14 +191,33 @@ async function launchBrowserContext() {
   }
   attempts.push({ label: 'bundled-chromium', opts: {} });
 
+  const profileCandidates = [PROFILE_DIR];
+  if (PROFILE_FALLBACK) {
+    const fallbackProfileDir = `${PROFILE_DIR}-fresh-${Date.now()}`;
+    profileCandidates.push(fallbackProfileDir);
+  }
+
   let lastError = null;
-  for (const attempt of attempts) {
-    try {
-      return await chromium.launchPersistentContext(PROFILE_DIR, { ...base, ...attempt.opts });
-    } catch (error) {
-      lastError = error;
-      const msg = String(error?.message || error).split('\n')[0];
-      console.warn(`Browser launch attempt failed (${attempt.label}): ${msg}`);
+  for (let p = 0; p < profileCandidates.length; p += 1) {
+    const profileDir = profileCandidates[p];
+    if (CLEAR_SINGLETON_LOCKS || p > 0) {
+      await clearLocks(profileDir);
+    }
+    if (p > 0) {
+      await fs.rm(profileDir, { recursive: true, force: true }).catch(() => null);
+      console.warn(`Primary profile failed previously; retrying with fresh profile: ${profileDir}`);
+    }
+
+    for (const attempt of attempts) {
+      try {
+        const ctx = await chromium.launchPersistentContext(profileDir, { ...base, ...attempt.opts });
+        console.log(`Launched browser using profile: ${profileDir} (${attempt.label})`);
+        return ctx;
+      } catch (error) {
+        lastError = error;
+        const msg = String(error?.message || error).split('\n')[0];
+        console.warn(`Browser launch attempt failed (${attempt.label}, profile=${profileDir}): ${msg}`);
+      }
     }
   }
   throw lastError || new Error('Unable to launch browser context.');
@@ -336,6 +360,37 @@ async function ensureAdGroupNameBeforeDone(page, adgroupNum, value) {
   const current = await loc.inputValue().catch(() => '');
   if (current === String(value)) return true;
   return setAdGroupNameStrict(page, adgroupNum, value);
+}
+
+async function dismissDatePickerPopover(page, adgroupNum = null) {
+  for (let i = 0; i < 3; i += 1) {
+    await page.keyboard.press('Escape').catch(() => null);
+    await page.waitForTimeout(40);
+  }
+
+  const selectors = Number.isInteger(adgroupNum)
+    ? [
+      `input[name="adgroup.${adgroupNum}.adgroup_name"]:visible`,
+      `input[data-test="adgroup.${adgroupNum}.adgroup_name-field--input"]:visible`,
+      'input[data-test$=".adgroup_name-field--input"]:visible',
+      'input[name$=".adgroup_name"]:visible',
+      '[data-test="campaign-action-row"]',
+      'body'
+    ]
+    : [
+      'input[data-test$=".adgroup_name-field--input"]:visible',
+      'input[name$=".adgroup_name"]:visible',
+      '[data-test="campaign-action-row"]',
+      'body'
+    ];
+
+  const focusTarget = await firstVisibleLocator(page, selectors, 900, 50);
+  if (focusTarget) {
+    await focusTarget.click({ force: true, timeout: 400 }).catch(() => null);
+  }
+
+  await page.waitForTimeout(70);
+  await page.keyboard.press('Escape').catch(() => null);
 }
 
 async function hasFormConfigError(page) {
@@ -524,6 +579,14 @@ async function gotoAdGroupsStepFromReservations(page) {
   } catch {
     return false;
   }
+  // Date picker popover can stay open and intercept Next clicks.
+  await dismissDatePickerPopover(page).catch(() => null);
+  await clickFirst(page, [
+    'input[data-test="reservation-reserve.reservation_name-field--input"]',
+    '[data-test="campaign-action-row"]',
+    'body'
+  ], 700).catch(() => null);
+  await page.waitForTimeout(120);
 
   let movedToAdGroups = false;
   for (let attempt = 0; attempt < 3 && !movedToAdGroups; attempt += 1) {
@@ -553,95 +616,421 @@ function shuffledIndices(count) {
   return arr;
 }
 
-async function setKeywords(page, targetCount = 20, requestedKeywords = []) {
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeUiText(value) {
+  return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function dedupeStrings(values) {
+  if (!Array.isArray(values)) return [];
+  const out = [];
+  for (const raw of values) {
+    const value = String(raw ?? '').trim();
+    if (!value) continue;
+    if (!out.some((x) => normalizeUiText(x) === normalizeUiText(value))) out.push(value);
+  }
+  return out;
+}
+
+async function getTargetingGroup(page, targetGroupIndex = null) {
+  const allGroups = page.locator('[data-test="targeting-group"]');
+  const count = await allGroups.count().catch(() => 0);
+  if (count === 0) return null;
+  if (Number.isInteger(targetGroupIndex) && targetGroupIndex >= 0 && targetGroupIndex < count) {
+    return allGroups.nth(targetGroupIndex);
+  }
+  return allGroups.nth(count - 1);
+}
+
+async function findNewestEmptyTargetingGroup(page) {
+  const allGroups = page.locator('[data-test="targeting-group"]');
+  const count = await allGroups.count().catch(() => 0);
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const candidate = allGroups.nth(i);
+    const trigger = candidate
+      .locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button')
+      .first();
+    const triggerVisible = await trigger.isVisible().catch(() => false);
+    if (!triggerVisible) continue;
+    const txt = normalizeUiText(await trigger.innerText().catch(() => ''));
+    if (!txt || txt.includes('select dimension')) {
+      return { group: candidate, index: i };
+    }
+  }
+  return null;
+}
+
+async function openPanelFromTrigger(page, trigger, timeoutMs = 2200) {
   const startedAt = Date.now();
-  const maxMs = 3400;
-  await clickFirst(page, [
-    '[data-testid="remove-dimension-btn--button"]',
-    '[data-test="remove-dimension-btn"]'
-  ], 350).catch(() => null);
-  await clickFirst(page, [
-    '[data-testid="add-dimension-btn--button"]',
-    '[data-test="add-dimension-btn"]',
-    'button:has-text("Add dimension within group")'
-  ], 700).catch(() => null);
+  while (Date.now() - startedAt < timeoutMs) {
+    const visible = await trigger.isVisible().catch(() => false);
+    if (!visible) return null;
 
-  const dimensionOpened = await clickFirst(page, [
-    '[data-testid="dimension-select--trigger--button"]',
-    '[data-testid="dimension-select--trigger"] button',
-    'button:has-text("Select dimension")'
-  ], 1100);
+    await trigger.scrollIntoViewIfNeeded().catch(() => null);
+    await trigger.click({ force: true, timeout: 700 }).catch(() => null);
 
-  if (!dimensionOpened) return false;
+    const panelId = await trigger.getAttribute('aria-controls').catch(() => '');
+    if (!panelId) {
+      await page.waitForTimeout(70);
+      continue;
+    }
+    const panel = page.locator(`[id="${panelId}"]`);
+    const panelVisible = await panel.isVisible().catch(() => false);
+    if (panelVisible) return panel;
 
-  const dimensionSelected = await clickFirst(page, [
-    'text=search_query',
-    '[role="option"]:has-text("search_query")',
-    '[data-value="search_query"]'
-  ], 1100);
+    const waited = await panel.waitFor({ state: 'visible', timeout: 500 }).then(() => true).catch(() => false);
+    if (waited) return panel;
 
-  if (!dimensionSelected) return false;
+    await page.waitForTimeout(70);
+  }
+  return null;
+}
 
-  await page.waitForTimeout(80);
+async function clickLabelInPanel(page, panel, label) {
+  const exact = new RegExp(`^\\s*${escapeRegExp(label)}\\s*$`, 'i');
+  const contains = new RegExp(escapeRegExp(label), 'i');
+  const normalizedLabel = normalizeUiText(label);
+  const variants = [
+    label,
+    label.toLowerCase(),
+    label.toLowerCase().replace(/\s+/g, '_')
+  ];
 
-  const opened = await clickFirst(page, [
-    '[data-testid="attribute-select--trigger--button"]',
-    '[data-testid="attribute-select--trigger"] button',
-    'button:has-text("Select attributes")',
-    'button:has-text("+ selected")'
-  ], 1100);
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    await panel.locator('[role="option"], [data-value]').first().waitFor({ state: 'visible', timeout: 450 }).catch(() => null);
 
-  if (!opened) return false;
+    for (const loc of [
+      panel.getByRole('option', { name: exact }).first(),
+      panel.getByRole('option', { name: contains }).first(),
+      panel.locator(`[data-value="${variants[0]}"]`).first(),
+      panel.locator(`[data-value="${variants[1]}"]`).first(),
+      panel.locator(`[data-value="${variants[2]}"]`).first(),
+      panel.getByText(exact).first()
+    ]) {
+      const visible = await loc.isVisible().catch(() => false);
+      if (!visible) continue;
+      const clicked = await loc.click({ force: true, timeout: 500 }).then(() => true).catch(() => false);
+      if (clicked) return true;
+    }
 
-  const searchInput = page.locator('input[placeholder="Search"]').last();
-  await searchInput.waitFor({ state: 'visible', timeout: 900 }).catch(() => null);
+    for (const globalLoc of [
+      page.getByRole('option', { name: exact }).first(),
+      page.locator(`[data-value="${variants[0]}"]`).first(),
+      page.locator(`[data-value="${variants[1]}"]`).first(),
+      page.locator(`[data-value="${variants[2]}"]`).first()
+    ]) {
+      const visible = await globalLoc.isVisible().catch(() => false);
+      if (!visible) continue;
+      const clicked = await globalLoc.click({ force: true, timeout: 500 }).then(() => true).catch(() => false);
+      if (clicked) return true;
+    }
 
-  // Clear any visible previously-selected keywords so each group gets a fresh random set.
-  for (let pass = 0; pass < 3; pass += 1) {
-    const checked = page.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"][aria-checked="true"]');
-    const checkedCount = Math.min(await checked.count(), 30);
+    await panel.evaluate((root) => {
+      const scrollable = Array.from(root.querySelectorAll('*')).find(
+        (el) => el.scrollHeight > el.clientHeight + 8
+      );
+      if (scrollable) {
+        scrollable.scrollTop += 220;
+      }
+    }).catch(() => null);
+    await page.waitForTimeout(110);
+  }
+
+  return panel.evaluate((root, needle) => {
+    const normalizeText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const candidates = Array.from(
+      root.querySelectorAll('[role="option"], [data-value], button, div')
+    );
+    for (const el of candidates) {
+      const txt = normalizeText(el.textContent || '');
+      if (!txt || txt !== needle) continue;
+      if (typeof el.click === 'function') {
+        el.click();
+        return true;
+      }
+    }
+    return false;
+  }, normalizedLabel).catch(() => false);
+}
+
+async function waitForAttributeChoices(panel, timeoutMs = 2400) {
+  const startedAt = Date.now();
+  const checkboxLocator = panel.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"]');
+  while (Date.now() - startedAt < timeoutMs) {
+    const count = await checkboxLocator.count().catch(() => 0);
+    if (count > 0) return true;
+    await new Promise((r) => setTimeout(r, 90));
+  }
+  return false;
+}
+
+async function setExactAttributeSelections(page, panel, values = [], opts = {}) {
+  const cleanValues = dedupeStrings(values);
+  const normalizedTargets = cleanValues.map((v) => normalizeUiText(v));
+  if (normalizedTargets.length === 0) {
+    return { ok: true, unmatched: [], matchedCount: 0, checkedCount: 0 };
+  }
+
+  const searchInput = panel.locator('input[placeholder*="Search"]').first();
+  const hasSearch = await searchInput.isVisible().catch(() => false);
+  if (hasSearch) {
+    await searchInput.fill('').catch(() => {});
+  }
+
+  // First clear all checked values so only the requested values remain selected.
+  for (let pass = 0; pass < 4; pass += 1) {
+    const checked = panel.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"][aria-checked="true"]');
+    const checkedCount = await checked.count().catch(() => 0);
     if (checkedCount === 0) break;
     for (let i = 0; i < checkedCount; i += 1) {
-      await checked.nth(i).click({ force: true, timeout: 250 }).catch(() => {});
+      await checked.first().click({ force: true, timeout: 280 }).catch(() => {});
+    }
+    await page.waitForTimeout(30);
+  }
+
+  const maxAttemptsPerValue = Number.isFinite(opts.maxAttemptsPerValue) ? Math.max(1, Math.floor(opts.maxAttemptsPerValue)) : 6;
+  const retryDelayMs = Number.isFinite(opts.retryDelayMs) ? Math.max(30, Math.floor(opts.retryDelayMs)) : 120;
+
+  const unmatched = [];
+  for (const value of normalizedTargets) {
+    let matched = false;
+    for (let attempt = 0; attempt < maxAttemptsPerValue && !matched; attempt += 1) {
+      matched = await panel.evaluate((root, needleValue) => {
+        const normalizeText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        const canonicalText = (s) => normalizeText(s).replace(/[^a-z0-9]+/g, ' ').trim();
+        const matchesTarget = (rowText, target) => {
+          if (!rowText || !target) return false;
+          if (rowText === target) return true;
+          const padded = ` ${rowText} `;
+          if (padded.includes(` ${target} `)) return true;
+          const canonicalRow = canonicalText(rowText);
+          const canonicalTarget = canonicalText(target);
+          if (!canonicalRow || !canonicalTarget) return false;
+          if (canonicalRow === canonicalTarget) return true;
+          return ` ${canonicalRow} `.includes(` ${canonicalTarget} `);
+        };
+        const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
+        for (const container of containers) {
+          const button = container.querySelector('button[role="checkbox"]');
+          if (!button) continue;
+
+          const parent = container.parentElement;
+          const siblingText = normalizeText(
+            Array.from(parent?.children || [])
+              .filter((el) => el !== container)
+              .map((el) => el.textContent || '')
+              .join(' ')
+          );
+          const rowText = siblingText || normalizeText(parent?.textContent || '');
+          if (!matchesTarget(rowText, needleValue)) continue;
+
+          const isChecked = button.getAttribute('aria-checked') === 'true';
+          if (!isChecked) {
+            button.click();
+          }
+          return button.getAttribute('aria-checked') === 'true';
+        }
+        return false;
+      }, value).catch(() => false);
+
+      if (matched) break;
+      await page.mouse.wheel(0, 420).catch(() => {});
+      await page.waitForTimeout(retryDelayMs);
+    }
+    if (!matched) unmatched.push(value);
+  }
+
+  const enforceResult = await panel.evaluate((root, targets) => {
+    const normalizeText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const canonicalText = (s) => normalizeText(s).replace(/[^a-z0-9]+/g, ' ').trim();
+    const matchesTarget = (rowText, target) => {
+      if (!rowText || !target) return false;
+      if (rowText === target) return true;
+      const padded = ` ${rowText} `;
+      if (padded.includes(` ${target} `)) return true;
+      const canonicalRow = canonicalText(rowText);
+      const canonicalTarget = canonicalText(target);
+      if (!canonicalRow || !canonicalTarget) return false;
+      if (canonicalRow === canonicalTarget) return true;
+      return ` ${canonicalRow} `.includes(` ${canonicalTarget} `);
+    };
+    const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
+    let checkedCount = 0;
+    let matchedCount = 0;
+    for (const container of containers) {
+      const button = container.querySelector('button[role="checkbox"]');
+      if (!button) continue;
+
+      const parent = container.parentElement;
+      const siblingText = normalizeText(
+        Array.from(parent?.children || [])
+          .filter((el) => el !== container)
+          .map((el) => el.textContent || '')
+          .join(' ')
+      );
+      const rowText = siblingText || normalizeText(parent?.textContent || '');
+      const shouldBeChecked = targets.some((t) => matchesTarget(rowText, t));
+
+      let isChecked = button.getAttribute('aria-checked') === 'true';
+      if (isChecked !== shouldBeChecked) {
+        button.click();
+        isChecked = button.getAttribute('aria-checked') === 'true';
+      }
+      if (isChecked) checkedCount += 1;
+      if (shouldBeChecked && isChecked) matchedCount += 1;
+    }
+    return { checkedCount, matchedCount };
+  }, normalizedTargets).catch(() => ({ checkedCount: 0, matchedCount: 0 }));
+
+  if (hasSearch) {
+    await searchInput.fill('').catch(() => {});
+  }
+
+  const ok = unmatched.length === 0
+    && enforceResult.matchedCount === normalizedTargets.length
+    && enforceResult.checkedCount === normalizedTargets.length;
+
+  return {
+    ok,
+    unmatched,
+    matchedCount: enforceResult.matchedCount,
+    checkedCount: enforceResult.checkedCount
+  };
+}
+
+async function selectOnlyFirstAttributeOption(page, panel) {
+  for (let pass = 0; pass < 3; pass += 1) {
+    const checked = panel.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"][aria-checked="true"]');
+    const checkedCount = await checked.count().catch(() => 0);
+    if (checkedCount === 0) break;
+    for (let i = 0; i < checkedCount; i += 1) {
+      await checked.first().click({ force: true, timeout: 240 }).catch(() => {});
     }
     await page.waitForTimeout(20);
   }
 
-  const desiredKeywords = [];
-  if (Array.isArray(requestedKeywords)) {
-    for (const raw of requestedKeywords) {
-      const kw = String(raw ?? '').trim();
-      if (kw && !desiredKeywords.some((x) => x.toLowerCase() === kw.toLowerCase())) desiredKeywords.push(kw);
-    }
+  const first = panel.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"]').first();
+  const visible = await first.isVisible().catch(() => false);
+  if (!visible) return false;
+
+  const wasChecked = (await first.getAttribute('aria-checked').catch(() => 'false')) === 'true';
+  if (!wasChecked) {
+    await first.click({ force: true, timeout: 400 }).catch(() => {});
   }
+  const nowChecked = (await first.getAttribute('aria-checked').catch(() => 'false')) === 'true';
+  if (!nowChecked) return false;
+
+  const allChecked = panel.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"][aria-checked="true"]');
+  const checkedCount = await allChecked.count().catch(() => 0);
+  return checkedCount === 1;
+}
+
+async function setKeywords(page, targetCount = 20, requestedKeywords = [], opts = {}) {
+  const startedAt = Date.now();
+  const maxMs = 8000;
+  const targetGroupIndex = Number.isInteger(opts.targetGroupIndex) ? opts.targetGroupIndex : 0;
+  const adgroupNum = Number.isInteger(opts.adgroupNum) ? opts.adgroupNum : null;
+
+  await dismissDatePickerPopover(page, adgroupNum);
+
+  const activeGroup = await getTargetingGroup(page, targetGroupIndex);
+  if (!activeGroup) return false;
+
+  const dimensionTrigger = activeGroup.locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button').first();
+  const dimensionVisible = await dimensionTrigger.isVisible().catch(() => false);
+  if (!dimensionVisible) return false;
+
+  const dimensionText = normalizeUiText(await dimensionTrigger.innerText().catch(() => ''));
+  if (!dimensionText.includes('search_query')) {
+    const dimensionPanel = await openPanelFromTrigger(page, dimensionTrigger, 2200);
+    if (!dimensionPanel) return false;
+    const selectedSearchDimension = await clickLabelInPanel(page, dimensionPanel, 'search_query');
+    if (!selectedSearchDimension) return false;
+  }
+
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(80);
+
+  const attributeTrigger = activeGroup.locator('[data-testid="attribute-select--trigger--button"], [data-testid="attribute-select--trigger"] button').first();
+  const attributeVisible = await attributeTrigger.isVisible().catch(() => false);
+  if (!attributeVisible) return false;
+
+  const attributePanel = await openPanelFromTrigger(page, attributeTrigger, 2200);
+  if (!attributePanel) return false;
+  const panelReady = await waitForAttributeChoices(attributePanel, 2200);
+  if (!panelReady) return false;
+
+  const searchInput = attributePanel.locator('input[placeholder*="Search"]').first();
+  const hasSearch = await searchInput.isVisible().catch(() => false);
+  if (hasSearch) {
+    await searchInput.fill('').catch(() => {});
+  }
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    const checked = attributePanel.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"][aria-checked="true"]');
+    const checkedCount = await checked.count().catch(() => 0);
+    if (checkedCount === 0) break;
+    for (let i = 0; i < checkedCount; i += 1) {
+      await checked.first().click({ force: true, timeout: 250 }).catch(() => {});
+    }
+    await page.waitForTimeout(25);
+  }
+
+  const desiredKeywords = dedupeStrings(requestedKeywords).slice(0, targetCount);
+
+  const selectKeywordFromVisibleRows = async (keyword) => {
+    const needle = normalizeUiText(keyword);
+    return attributePanel.evaluate((root, needleValue) => {
+      const normalizeText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
+      for (const container of containers) {
+        const button = container.querySelector('button[role="checkbox"]');
+        if (!button) continue;
+        const parent = container.parentElement;
+        const siblingText = normalizeText(
+          Array.from(parent?.children || [])
+            .filter((el) => el !== container)
+            .map((el) => el.textContent || '')
+            .join(' ')
+        );
+        const rowText = siblingText || normalizeText(parent?.textContent || '');
+        if (!rowText.includes(needleValue)) continue;
+        const isChecked = button.getAttribute('aria-checked') === 'true';
+        if (!isChecked) {
+          button.click();
+        }
+        return button.getAttribute('aria-checked') === 'true';
+      }
+      return false;
+    }, needle).catch(() => false);
+  };
 
   if (desiredKeywords.length > 0) {
     let selectedFromDesired = 0;
     const missingKeywords = [];
 
-    for (const keyword of desiredKeywords.slice(0, targetCount)) {
+    for (const keyword of desiredKeywords) {
       if (Date.now() - startedAt > maxMs) break;
-      await searchInput.fill('').catch(() => {});
-      await searchInput.fill(keyword).catch(() => {});
-      await page.waitForTimeout(70);
+      if (hasSearch) {
+        await searchInput.fill('').catch(() => {});
+        await searchInput.fill(keyword).catch(() => {});
+        await page.waitForTimeout(70);
+      }
 
-      const row = page.locator('[data-testid="attribute-select--checkbox"]', { hasText: keyword }).first();
-      const exists = (await row.count().catch(() => 0)) > 0;
-      if (!exists) {
+      const matched = await selectKeywordFromVisibleRows(keyword);
+      if (!matched) {
         missingKeywords.push(keyword);
         continue;
       }
-
-      const cb = row.locator('button[role="checkbox"]').first();
-      const isChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
-      if (!isChecked) {
-        await cb.click({ force: true, timeout: 300 }).catch(() => {});
-      }
-      const nowChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
-      if (nowChecked) selectedFromDesired += 1;
+      selectedFromDesired += 1;
     }
 
-    await searchInput.fill('').catch(() => {});
+    if (hasSearch) {
+      await searchInput.fill('').catch(() => {});
+    }
     await page.keyboard.press('Escape').catch(() => {});
     await page.keyboard.press('Escape').catch(() => {});
 
@@ -654,8 +1043,8 @@ async function setKeywords(page, targetCount = 20, requestedKeywords = []) {
   let totalChecked = 0;
   for (let pass = 0; pass < 3 && totalChecked < targetCount; pass += 1) {
     if (Date.now() - startedAt > maxMs) break;
-    const checkboxes = page.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"]');
-    const count = await checkboxes.count();
+    const checkboxes = attributePanel.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"]');
+    const count = await checkboxes.count().catch(() => 0);
     if (count === 0) break;
 
     const order = shuffledIndices(Math.min(count, 40));
@@ -665,16 +1054,14 @@ async function setKeywords(page, targetCount = 20, requestedKeywords = []) {
       if (isChecked) continue;
       await cb.click({ force: true, timeout: 250 }).catch(() => {});
       const nowChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
-      if (nowChecked) {
-        totalChecked += 1;
-      }
+      if (nowChecked) totalChecked += 1;
       if (Date.now() - startedAt > maxMs) break;
       if (totalChecked >= targetCount) break;
     }
 
-    if (totalChecked < targetCount && pass < 3) {
-      await page.mouse.wheel(0, 700);
-      await page.waitForTimeout(30);
+    if (totalChecked < targetCount && pass < 2) {
+      await page.mouse.wheel(0, 700).catch(() => {});
+      await page.waitForTimeout(40);
     }
   }
 
@@ -683,41 +1070,46 @@ async function setKeywords(page, targetCount = 20, requestedKeywords = []) {
   return totalChecked > 0;
 }
 
-async function getKeywordSelectionCount(page) {
-  const trigger = page
+async function getKeywordSelectionCount(page, targetGroupIndex = 0) {
+  const activeGroup = await getTargetingGroup(page, targetGroupIndex);
+  if (!activeGroup) return 0;
+  const trigger = activeGroup
     .locator('[data-testid="attribute-select--trigger--button"], [data-testid="attribute-select--trigger"] button')
     .first();
   const txt = (await trigger.innerText().catch(() => '')).replace(/\s+/g, ' ');
   const m = txt.match(/\+(\d+)\s+selected/i);
-  if (m) return Number(m[1]);
-
-  const badge = await page.getByText(/^\+\d+\s+selected$/i).first().innerText().catch(() => '');
-  const m2 = String(badge).match(/\+(\d+)\s+selected/i);
-  return m2 ? Number(m2[1]) : 0;
+  return m ? Number(m[1]) : 0;
 }
 
-async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, requestedKeywords = []) {
+async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, requestedKeywords = [], opts = {}) {
+  const targetGroupIndex = Number.isInteger(opts.targetGroupIndex) ? opts.targetGroupIndex : 0;
+  const adgroupNum = Number.isInteger(opts.adgroupNum) ? opts.adgroupNum : null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const ok = await setKeywords(page, targetCount, requestedKeywords);
-    const selectedCount = await getKeywordSelectionCount(page);
+    const ok = await setKeywords(page, targetCount, requestedKeywords, { targetGroupIndex, adgroupNum });
+    const selectedCount = await getKeywordSelectionCount(page, targetGroupIndex);
     if (ok && selectedCount > 0) return true;
     await page.keyboard.press('Escape').catch(() => {});
-    await page.waitForTimeout(120);
+    await page.waitForTimeout(140);
   }
   return false;
 }
 
 async function setAdditionalDimensionValues(page, dimensionName, values = [], opts = {}) {
-  const cleanValues = Array.isArray(values) ? values.map((v) => String(v ?? '').trim()).filter(Boolean) : [];
+  const cleanValues = dedupeStrings(values);
   if (cleanValues.length === 0) return true;
-  const addDimensionWithinGroup = opts.addDimensionWithinGroup !== false;
 
+  const requestedGroupIndex = Number.isInteger(opts.targetGroupIndex) ? opts.targetGroupIndex : null;
+  const adgroupNum = Number.isInteger(opts.adgroupNum) ? opts.adgroupNum : null;
+  await dismissDatePickerPopover(page, adgroupNum);
+  let activeGroup = await getTargetingGroup(page, requestedGroupIndex);
+  if (!activeGroup) return false;
+
+  const addDimensionWithinGroup = opts.addDimensionWithinGroup !== false;
   if (addDimensionWithinGroup) {
-    const added = await clickFirst(page, [
-      '[data-testid="add-dimension-btn--button"]',
-      '[data-test="add-dimension-btn"]',
-      'button:has-text("Add dimension within group")'
-    ], 1200);
+    const addDimensionButton = activeGroup
+      .locator('[data-testid="add-dimension-btn--button"], [data-test="add-dimension-btn"], button:has-text("Add dimension within group")')
+      .first();
+    const added = await addDimensionButton.click({ force: true, timeout: 1200 }).then(() => true).catch(() => false);
     if (!added) return false;
   }
 
@@ -728,73 +1120,242 @@ async function setAdditionalDimensionValues(page, dimensionName, values = [], op
   };
   const labels = dimensionAliases[dimensionName] || [dimensionName];
 
-  const dimensionTrigger = page.locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button').last();
-  await dimensionTrigger.waitFor({ state: 'visible', timeout: 1500 }).catch(() => null);
-  await dimensionTrigger.click({ timeout: 1000 }).catch(() => null);
-
-  const selectors = [];
-  for (const label of labels) {
-    selectors.push(`[role="option"]:has-text("${label}")`);
-    selectors.push(`text=${label}`);
-    selectors.push(`[data-value="${label}"]`);
-    selectors.push(`[data-value="${label.toLowerCase()}"]`);
-    selectors.push(`[data-value="${label.toLowerCase().replace(/\s+/g, '_')}"]`);
+  const dimensionTrigger = activeGroup
+    .locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button')
+    .first();
+  if (requestedGroupIndex != null) {
+    const currentText = normalizeUiText(await dimensionTrigger.innerText().catch(() => ''));
+    if (currentText && !currentText.includes('select dimension')) {
+      const emptyGroup = await findNewestEmptyTargetingGroup(page);
+      if (emptyGroup?.group) {
+        activeGroup = emptyGroup.group;
+      }
+    }
+  }
+  const resolvedDimensionTrigger = activeGroup
+    .locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button')
+    .first();
+  const triggerVisible = await resolvedDimensionTrigger.isVisible().catch(() => false);
+  if (!triggerVisible) {
+    console.warn(`Could not find dimension trigger for ${dimensionName} (group index ${requestedGroupIndex ?? 'last'}).`);
+    return false;
   }
 
-  let pickedDimension = await clickFirst(page, selectors, 1200);
-  if (!pickedDimension) {
-    // Fallback for filterable option lists.
-    await page.keyboard.type(labels[0], { delay: 8 }).catch(() => null);
-    await page.waitForTimeout(120);
-    pickedDimension = await clickFirst(page, selectors, 900);
-    if (!pickedDimension) {
-      await page.keyboard.press('Enter').catch(() => null);
+  const dimensionPanel = await openPanelFromTrigger(page, resolvedDimensionTrigger, 2200);
+  if (!dimensionPanel) {
+    console.warn(`Could not open dimension dropdown for ${dimensionName} (group index ${requestedGroupIndex ?? 'last'}).`);
+    return false;
+  }
+
+  let pickedDimension = false;
+  for (let attempt = 0; attempt < 2 && !pickedDimension; attempt += 1) {
+    if (attempt > 0) {
+      await page.keyboard.press('Escape').catch(() => {});
       await page.waitForTimeout(120);
+      const reopenedPanel = await openPanelFromTrigger(page, resolvedDimensionTrigger, 2200);
+      if (!reopenedPanel) break;
+      for (const label of labels) {
+        pickedDimension = await clickLabelInPanel(page, reopenedPanel, label);
+        if (pickedDimension) break;
+      }
+      continue;
+    }
+    for (const label of labels) {
+      pickedDimension = await clickLabelInPanel(page, dimensionPanel, label);
+      if (pickedDimension) break;
     }
   }
-  const dimText = (await dimensionTrigger.innerText().catch(() => '')).toLowerCase();
-  const dimensionApplied = labels.some((l) => dimText.includes(String(l).toLowerCase().replace('_', ' ')));
-  if (!pickedDimension && !dimensionApplied) return false;
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(60);
 
-  const attributeTrigger = page.locator('[data-testid="attribute-select--trigger--button"], [data-testid="attribute-select--trigger"] button').last();
-  await attributeTrigger.click({ timeout: 1000 }).catch(() => null);
-
-  const searchInput = page.locator('input[placeholder="Search"]').last();
-  await searchInput.waitFor({ state: 'visible', timeout: 1200 }).catch(() => null);
-
-  let selected = 0;
-  for (const value of cleanValues) {
-    await searchInput.fill('').catch(() => {});
-    await searchInput.fill(value).catch(() => {});
-    await page.waitForTimeout(70);
-    let row = page.locator('[data-testid="attribute-select--checkbox"]', { hasText: value }).first();
-    let exists = (await row.count().catch(() => 0)) > 0;
-    if (!exists) {
-      row = page.locator('[data-testid="attribute-select--checkbox"]').first();
-      exists = (await row.count().catch(() => 0)) > 0;
-    }
-    if (!exists) continue;
-    const cb = row.locator('button[role="checkbox"]').first();
-    const isChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
-    if (!isChecked) await cb.click({ force: true, timeout: 300 }).catch(() => {});
-    const nowChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
-    if (nowChecked) selected += 1;
+  const dimText = normalizeUiText(await resolvedDimensionTrigger.innerText().catch(() => ''));
+  const dimensionApplied = labels.some((label) => {
+    const normalizedLabel = normalizeUiText(label).replace('_', ' ');
+    return dimText === normalizedLabel || dimText.includes(normalizedLabel);
+  });
+  if (!pickedDimension && !dimensionApplied) {
+    console.warn(`Failed to apply dimension ${dimensionName}; current dimension trigger text was "${dimText}".`);
+    return false;
   }
 
-  await searchInput.fill('').catch(() => {});
+  const normalizedDimName = normalizeUiText(dimensionName);
+  const attributeLoadDelayMs = normalizedDimName === 'country'
+    ? ATTRIBUTE_LOAD_WAIT_MS
+    : 260;
+  if (attributeLoadDelayMs > 0) {
+    await page.waitForTimeout(attributeLoadDelayMs);
+  }
+
+  const attributeTrigger = activeGroup
+    .locator('[data-testid="attribute-select--trigger--button"], [data-testid="attribute-select--trigger"] button')
+    .first();
+  const attributeVisible = await attributeTrigger.isVisible().catch(() => false);
+  if (!attributeVisible) {
+    console.warn(`Could not find attribute trigger for ${dimensionName} (group index ${requestedGroupIndex ?? 'last'}).`);
+    return false;
+  }
+
+  let attributePanel = await openPanelFromTrigger(page, attributeTrigger, 2200);
+  if (!attributePanel) {
+    console.warn(`Could not open attribute dropdown for ${dimensionName} (group index ${requestedGroupIndex ?? 'last'}).`);
+    return false;
+  }
+
+  let panelReady = await waitForAttributeChoices(attributePanel, 2200);
+  if (!panelReady) {
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.waitForTimeout(220);
+    attributePanel = await openPanelFromTrigger(page, attributeTrigger, 2200);
+    if (!attributePanel) {
+      console.warn(`Could not reopen attribute dropdown for ${dimensionName}.`);
+      return false;
+    }
+    panelReady = await waitForAttributeChoices(attributePanel, 2200);
+    if (!panelReady) {
+      console.warn(`No attribute checkbox options loaded for ${dimensionName}.`);
+      return false;
+    }
+  }
+
+  let selection = await setExactAttributeSelections(page, attributePanel, cleanValues, {
+    maxAttemptsPerValue: normalizedDimName === 'country' ? 10 : 6,
+    retryDelayMs: normalizedDimName === 'country' ? 150 : 100
+  });
+
+  if (!selection.ok && normalizedDimName === 'ad type') {
+    const fallbackPicked = await selectOnlyFirstAttributeOption(page, attributePanel);
+    if (fallbackPicked) {
+      console.warn(`Ad type value match failed; used first available ad type option as fallback.`);
+      selection = { ok: true, unmatched: [], matchedCount: 1, checkedCount: 1 };
+    }
+  }
+
   await page.keyboard.press('Escape').catch(() => {});
   await page.keyboard.press('Escape').catch(() => {});
-  return selected > 0;
+
+  const triggerText = (await attributeTrigger.innerText().catch(() => '')).replace(/\s+/g, ' ');
+  const triggerMatch = triggerText.match(/\+(\d+)\s+selected/i);
+  const triggerSelectedCount = triggerMatch ? Number(triggerMatch[1]) : null;
+
+  if (selection.unmatched.length > 0) {
+    console.warn(`Unmatched ${dimensionName} values: ${selection.unmatched.join(', ')}`);
+  }
+
+  return selection.ok && (triggerSelectedCount == null || triggerSelectedCount === cleanValues.length);
 }
 
 async function addNewTargetingGroup(page) {
-  const added = await clickFirst(page, [
-    '[data-testid="add-group-btn--button"]',
-    '[data-test="add-group-btn"]',
-    'button:has-text("Add new group")'
-  ], 1500);
+  const groups = page.locator('[data-test="targeting-group"]');
+  let beforeCount = await groups.count().catch(() => 0);
+  if (beforeCount === 0) {
+    for (let i = 0; i < 10; i += 1) {
+      await page.waitForTimeout(80);
+      beforeCount = await groups.count().catch(() => 0);
+      if (beforeCount > 0) break;
+    }
+  }
+
+  let added = false;
+  const addBtn = page
+    .locator('[data-testid="add-group-btn--button"]:visible, [data-test="add-group-btn"]:visible, button:has-text("Add new group"):visible')
+    .last();
+  const addBtnVisible = await addBtn.isVisible().catch(() => false);
+  if (addBtnVisible) {
+    added = await addBtn.click({ timeout: 1200, force: true }).then(() => true).catch(() => false);
+  }
+  if (!added) {
+    added = await clickFirst(page, [
+      '[data-testid="add-group-btn--button"]',
+      '[data-test="add-group-btn"]',
+      'button:has-text("Add new group")'
+    ], 1500);
+  }
   if (!added) return false;
-  await page.waitForTimeout(120);
+
+  for (let i = 0; i < 16; i += 1) {
+    const afterCount = await groups.count().catch(() => 0);
+    if (afterCount > beforeCount) {
+      return { ok: true, index: afterCount - 1 };
+    }
+    await page.waitForTimeout(90);
+  }
+  return { ok: false, index: -1 };
+}
+
+async function removeOrphanedEmptyTargetingGroups(page, maxRemovals = 3) {
+  let removed = 0;
+  for (let pass = 0; pass < maxRemovals; pass += 1) {
+    const groups = page.locator('[data-test="targeting-group"]');
+    const count = await groups.count().catch(() => 0);
+    if (count === 0) break;
+
+    let removedThisPass = false;
+    for (let i = count - 1; i >= 0; i -= 1) {
+      const group = groups.nth(i);
+      await group.scrollIntoViewIfNeeded().catch(() => null);
+      const trigger = group
+        .locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button')
+        .first();
+      const triggerText = normalizeUiText(
+        (await trigger.textContent().catch(() => '')) || (await trigger.innerText().catch(() => ''))
+      );
+      if (triggerText && !triggerText.includes('select dimension')) continue;
+
+      const removedViaClick = await group.evaluate((root) => {
+        const btn = root.querySelector('[data-testid="remove-group-btn--button"], [data-test="remove-group-btn"], button[aria-label="Remove group"]');
+        if (!btn) return false;
+        if (typeof btn.click === 'function') {
+          btn.click();
+          return true;
+        }
+        return false;
+      }).catch(() => false);
+      if (!removedViaClick) continue;
+
+      await page.waitForTimeout(120);
+      removed += 1;
+      removedThisPass = true;
+      break;
+    }
+
+    if (!removedThisPass) break;
+  }
+  return removed;
+}
+
+async function resetTargetingGroupsForAdGroup(page) {
+  const groups = page.locator('[data-test="targeting-group"]');
+
+  for (let pass = 0; pass < 8; pass += 1) {
+    const count = await groups.count().catch(() => 0);
+    if (count <= 1) break;
+    const lastGroup = groups.nth(count - 1);
+    await lastGroup.scrollIntoViewIfNeeded().catch(() => null);
+    const removed = await lastGroup.evaluate((root) => {
+      const btn = root.querySelector('[data-testid="remove-group-btn--button"], [data-test="remove-group-btn"], button[aria-label="Remove group"]');
+      if (!btn) return false;
+      if (typeof btn.click === 'function') {
+        btn.click();
+        return true;
+      }
+      return false;
+    }).catch(() => false);
+    if (!removed) break;
+    await page.waitForTimeout(150);
+  }
+
+  const remainingCount = await groups.count().catch(() => 0);
+  if (remainingCount === 0) return false;
+
+  const firstGroup = groups.first();
+  for (let pass = 0; pass < 4; pass += 1) {
+    const removeDimButtons = firstGroup.locator('[data-testid="remove-dimension-btn--button"], [data-test="remove-dimension-btn"], button[aria-label="Remove dimension"]');
+    const dimRemoveCount = await removeDimButtons.count().catch(() => 0);
+    if (dimRemoveCount <= 1) break;
+    await removeDimButtons.last().click({ force: true, timeout: 700 }).catch(() => null);
+    await page.waitForTimeout(90);
+  }
+
   return true;
 }
 
@@ -902,6 +1463,11 @@ async function createOneAdGroup(page, group, idx) {
     await captureDiagnostics(page, `${label}-open-create-failed`);
     throw new Error(`Could not open new ad group for ${group.name}`);
   }
+  const targetingReset = await resetTargetingGroupsForAdGroup(page);
+  if (!targetingReset) {
+    await captureDiagnostics(page, `${label}-targeting-reset-failed`);
+    throw new Error(`Could not reset targeting groups for ${group.name}`);
+  }
 
   const nameSet = await setAdGroupNameStrict(page, adgroupNum, group.name);
   if (!nameSet) {
@@ -926,52 +1492,92 @@ async function createOneAdGroup(page, group, idx) {
   await fillFirst(page, ['input[data-test="6322-Carousel GIF(s)--input"]'], group.carouselGif || group.gifUrl).catch(() => null);
   await fillFirst(page, ['input[data-test="6566-Click URL--input"]'], group.clickUrl || group.gifUrl).catch(() => null);
   await fillFirst(page, ['input[data-test="6326-CTA URL--input"]'], group.ctaUrl || group.gifUrl).catch(() => null);
+  await dismissDatePickerPopover(page, adgroupNum);
 
   if (Array.isArray(group.keywords) && group.keywords.length > 0) {
     console.log(`Using ${group.keywords.length} requested keyword(s) for ${group.name}.`);
   } else {
     console.log(`No keywords provided for ${group.name}; selecting random keywords in UI.`);
   }
-  const kwOk = await setKeywordsWithRetry(page, 20, 3, group.keywords || []);
+  const kwOk = await setKeywordsWithRetry(page, 20, 3, group.keywords || [], { targetGroupIndex: 0, adgroupNum });
   if (!kwOk) {
     await captureDiagnostics(page, `${label}-keywords-select-failed`);
     throw new Error(`Could not set keywords for ${group.name}`);
   }
-  const adTypes = Array.isArray(group.adTypes) && group.adTypes.length ? group.adTypes : DEFAULT_AD_TYPES;
+  // Give the targeting UI a beat to commit search_query selections before creating the next group.
+  if (TARGETING_SETTLE_MS > 0) {
+    await page.waitForTimeout(TARGETING_SETTLE_MS);
+  }
+
   const countries = Array.isArray(group.countries) && group.countries.length ? group.countries : DEFAULT_COUNTRIES;
   const positions = Array.isArray(group.positions) && group.positions.length ? group.positions : DEFAULT_POSITIONS;
+  const adTypesRaw = Array.isArray(group.adTypes) && group.adTypes.length ? group.adTypes : DEFAULT_AD_TYPES;
+  let adTypes = adTypesRaw;
+  const norm = (v) => String(v || '').toLowerCase().trim();
+  const countrySet = new Set(countries.map(norm));
+  const adTypeLooksLikeCountry = adTypesRaw.some((v) => countrySet.has(norm(v)));
+  if (adTypeLooksLikeCountry) {
+    console.warn(`Ad type values looked like country values for ${group.name}; forcing default ad type ${DEFAULT_AD_TYPES.join(', ')}`);
+    adTypes = DEFAULT_AD_TYPES;
+  }
 
+  await dismissDatePickerPopover(page, adgroupNum);
   const countryGroupAdded = await addNewTargetingGroup(page);
-  if (!countryGroupAdded) {
+  if (!countryGroupAdded?.ok) {
     await captureDiagnostics(page, `${label}-country-group-add-failed`);
     throw new Error(`Could not add country targeting group for ${group.name}`);
   }
-  const countryOk = await setAdditionalDimensionValues(page, 'Country', countries, { addDimensionWithinGroup: false });
+  if (COUNTRY_PICK_DELAY_MS > 0) {
+    await page.waitForTimeout(COUNTRY_PICK_DELAY_MS);
+  }
+  const countryOk = await setAdditionalDimensionValues(page, 'Country', countries, {
+    addDimensionWithinGroup: false,
+    targetGroupIndex: countryGroupAdded.index,
+    adgroupNum
+  });
   if (!countryOk) {
     await captureDiagnostics(page, `${label}-country-targeting-failed`);
     throw new Error(`Could not set country targeting for ${group.name}`);
   }
+  if (TARGETING_GROUP_STEP_DELAY_MS > 0) {
+    await page.waitForTimeout(TARGETING_GROUP_STEP_DELAY_MS);
+  }
 
   const positionGroupAdded = await addNewTargetingGroup(page);
-  if (!positionGroupAdded) {
+  if (!positionGroupAdded?.ok) {
     await captureDiagnostics(page, `${label}-position-group-add-failed`);
     throw new Error(`Could not add position targeting group for ${group.name}`);
   }
-  const positionOk = await setAdditionalDimensionValues(page, 'Position', positions, { addDimensionWithinGroup: false });
+  const positionOk = await setAdditionalDimensionValues(page, 'Position', positions, {
+    addDimensionWithinGroup: false,
+    targetGroupIndex: positionGroupAdded.index,
+    adgroupNum
+  });
   if (!positionOk) {
     await captureDiagnostics(page, `${label}-position-targeting-failed`);
     throw new Error(`Could not set position targeting for ${group.name}`);
   }
+  if (TARGETING_GROUP_STEP_DELAY_MS > 0) {
+    await page.waitForTimeout(TARGETING_GROUP_STEP_DELAY_MS);
+  }
 
   const adTypeGroupAdded = await addNewTargetingGroup(page);
-  if (!adTypeGroupAdded) {
+  if (!adTypeGroupAdded?.ok) {
     await captureDiagnostics(page, `${label}-ad-type-group-add-failed`);
     throw new Error(`Could not add ad type targeting group for ${group.name}`);
   }
-  const adTypeOk = await setAdditionalDimensionValues(page, 'Ad type', adTypes, { addDimensionWithinGroup: false });
+  const adTypeOk = await setAdditionalDimensionValues(page, 'Ad type', adTypes, {
+    addDimensionWithinGroup: false,
+    targetGroupIndex: adTypeGroupAdded.index,
+    adgroupNum
+  });
   if (!adTypeOk) {
     await captureDiagnostics(page, `${label}-ad-type-targeting-failed`);
     throw new Error(`Could not set ad type targeting for ${group.name}`);
+  }
+  const orphanedGroupsRemoved = await removeOrphanedEmptyTargetingGroups(page, 3);
+  if (orphanedGroupsRemoved > 0) {
+    console.warn(`Removed ${orphanedGroupsRemoved} orphaned empty targeting group(s) before finishing ${label}.`);
   }
   await page.keyboard.press('Escape').catch(() => {});
   await page.waitForTimeout(20);
@@ -980,6 +1586,10 @@ async function createOneAdGroup(page, group, idx) {
   if (!nameStillSet) {
     await captureDiagnostics(page, `${label}-name-recheck-failed`);
     throw new Error(`Ad group name lost before Done for ${group.name}`);
+  }
+  const finalOrphanCleanup = await removeOrphanedEmptyTargetingGroups(page, 4);
+  if (finalOrphanCleanup > 0) {
+    console.warn(`Removed ${finalOrphanCleanup} trailing empty targeting group(s) right before Done for ${label}.`);
   }
 
   let doneSel = null;
