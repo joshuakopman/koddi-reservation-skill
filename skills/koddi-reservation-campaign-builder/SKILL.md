@@ -40,6 +40,9 @@ Optional ad group fields:
 - `click_url`
 - `cta_url`
 - `carousel_gif` or `carousel_gifs[0]`
+- `ad_types` (optional string array; defaults to `["API: GIF"]`)
+- `countries` (optional string array; defaults to `["United States"]`)
+- `positions` (optional string array; defaults to `["Position 1"]`)
 - `keywords` (optional; when provided, script attempts exact keyword selection in UI; otherwise random keywords are selected)
 
 Impression precedence:
@@ -56,7 +59,7 @@ The automation:
 - Selects `Targeted Reservation` and `Multiple Ad Group Test Flow`
 - Selects advertiser from `Select an advertiser`
 - Fills reservation name/dates
-- Creates all ad groups with impressions and asset fields
+- Creates all ad groups with impressions, asset fields, and targeting dimensions (search_query, ad type, country, position)
 - Clicks final `Submit`
 - Verifies submit success (success modal/navigation/toast checks)
 - Captures diagnostics under `artifacts/` on failures

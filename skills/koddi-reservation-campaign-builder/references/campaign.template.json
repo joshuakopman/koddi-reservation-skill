@@ -17,7 +17,16 @@
       "carousel_gifs": [
         "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX"
       ],
-      "keywords": []
+      "keywords": [],
+      "ad_types": [
+        "API: GIF"
+      ],
+      "countries": [
+        "United States"
+      ],
+      "positions": [
+        "Position 1"
+      ]
     }
   ]
 }

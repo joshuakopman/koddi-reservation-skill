@@ -5,7 +5,7 @@ Automates creation of a Koddi reservation campaign in the UI:
 - Creates a new reservation
 - Creates multiple ad groups
 - Populates creative/click/CTA fields
-- Applies keyword targeting (randomized selection in UI)
+- Applies targeting for keywords, ad type, country, and position
 - Submits and verifies success
 
 ## Repository Layout
@@ -71,6 +71,9 @@ Each `ad_groups[]` item:
 - `cta_url` (string, optional; defaults to `gif_url`)
 - `carousel_gif` (string, optional)
 - `carousel_gifs` (string array, optional; first value used)
+- `ad_types` (string array, optional; defaults to `["API: GIF"]`)
+- `countries` (string array, optional; defaults to `["United States"]`)
+- `positions` (string array, optional; defaults to `["Position 1"]`)
 - `keywords` (array, optional)
   - If provided: script attempts to select those exact keywords in Koddi UI.
   - If omitted or empty: script randomly selects keywords in UI for test coverage.
@@ -103,6 +106,9 @@ Impression precedence:
       "carousel_gifs": [
         "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX"
       ],
+      "ad_types": ["API: GIF"],
+      "countries": ["United States"],
+      "positions": ["Position 1"],
       "keywords": ["city", "drama", "night"]
     }
   ]

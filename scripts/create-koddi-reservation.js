@@ -19,6 +19,9 @@ let TOTAL_IMPRESSIONS = Number(process.env.TOTAL_IMPRESSIONS || 0);
 const KEEP_BROWSER_OPEN = process.env.KEEP_BROWSER_OPEN !== '0';
 const SLOW_MO = Number(process.env.SLOW_MO || 0);
 const DEBUG_KEYWORD_FAILURES = process.env.DEBUG_KEYWORD_FAILURES === '1';
+const DEFAULT_COUNTRIES = ['United States'];
+const DEFAULT_AD_TYPES = ['API: GIF'];
+const DEFAULT_POSITIONS = ['Position 1'];
 
 const DEFAULT_AD_GROUPS = [
   {
@@ -47,7 +50,13 @@ const DEFAULT_AD_GROUPS = [
     keywords: ['shock', 'surprised', 'omg', 'no_way', 'panic', 'wild', 'unexpected', 'chaos', 'intense', 'reaction', 'yikes', 'gasp', 'uh_oh', 'stunned', 'sudden', 'breakdown', 'rush', 'alarm', 'dramatic', 'what_happened']
   }
 ];
-let AD_GROUPS = DEFAULT_AD_GROUPS.map((g) => ({ ...g, reservedImpressions: RESERVED_IMPS_PER_GROUP }));
+let AD_GROUPS = DEFAULT_AD_GROUPS.map((g) => ({
+  ...g,
+  countries: Array.isArray(g.countries) && g.countries.length ? g.countries : DEFAULT_COUNTRIES,
+  adTypes: Array.isArray(g.adTypes) && g.adTypes.length ? g.adTypes : DEFAULT_AD_TYPES,
+  positions: Array.isArray(g.positions) && g.positions.length ? g.positions : DEFAULT_POSITIONS,
+  reservedImpressions: RESERVED_IMPS_PER_GROUP
+}));
 
 function toNumber(value, fallback) {
   const n = Number(value);
@@ -83,10 +92,20 @@ function normalizeGroup(raw, fallbackImps) {
   const gifUrl = raw?.gifUrl || raw?.gif_url || raw?.click_url || raw?.cta_url || raw?.carousel_gif || raw?.carousel_gifs?.[0];
   if (!name || !gifUrl) return null;
 
+  const asArray = (value) => {
+    if (Array.isArray(value)) return value.map((v) => String(v ?? '').trim()).filter(Boolean);
+    if (value == null) return [];
+    const one = String(value).trim();
+    return one ? [one] : [];
+  };
+
   return {
     name: String(name),
     gifUrl: String(gifUrl),
     keywords: Array.isArray(raw?.keywords) ? raw.keywords : [],
+    countries: asArray(raw?.countries ?? raw?.country),
+    adTypes: asArray(raw?.ad_types ?? raw?.adTypes ?? raw?.ad_type),
+    positions: asArray(raw?.positions ?? raw?.position),
     reservedImpressions: toNumber(raw?.reserved_impressions ?? raw?.reservedImpressions, fallbackImps),
     creativeId: raw?.creative_id || name,
     creativeFriendlyName: raw?.creative_friendly_name || name,
@@ -688,6 +707,52 @@ async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, reques
   return false;
 }
 
+async function setAdditionalDimensionValues(page, dimensionName, values = []) {
+  const cleanValues = Array.isArray(values) ? values.map((v) => String(v ?? '').trim()).filter(Boolean) : [];
+  if (cleanValues.length === 0) return true;
+
+  const added = await clickFirst(page, [
+    '[data-testid="add-dimension-btn--button"]',
+    '[data-test="add-dimension-btn"]',
+    'button:has-text("Add dimension within group")'
+  ], 1200);
+  if (!added) return false;
+
+  const dimensionTrigger = page.locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button').last();
+  await dimensionTrigger.click({ timeout: 1000 }).catch(() => null);
+  const pickedDimension = await clickFirst(page, [
+    `[role="option"]:has-text("${dimensionName}")`,
+    `text=${dimensionName}`
+  ], 1200);
+  if (!pickedDimension) return false;
+
+  const attributeTrigger = page.locator('[data-testid="attribute-select--trigger--button"], [data-testid="attribute-select--trigger"] button').last();
+  await attributeTrigger.click({ timeout: 1000 }).catch(() => null);
+
+  const searchInput = page.locator('input[placeholder="Search"]').last();
+  await searchInput.waitFor({ state: 'visible', timeout: 1200 }).catch(() => null);
+
+  let selected = 0;
+  for (const value of cleanValues) {
+    await searchInput.fill('').catch(() => {});
+    await searchInput.fill(value).catch(() => {});
+    await page.waitForTimeout(70);
+    const row = page.locator('[data-testid="attribute-select--checkbox"]', { hasText: value }).first();
+    const exists = (await row.count().catch(() => 0)) > 0;
+    if (!exists) continue;
+    const cb = row.locator('button[role="checkbox"]').first();
+    const isChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
+    if (!isChecked) await cb.click({ force: true, timeout: 300 }).catch(() => {});
+    const nowChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
+    if (nowChecked) selected += 1;
+  }
+
+  await searchInput.fill('').catch(() => {});
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.keyboard.press('Escape').catch(() => {});
+  return selected > 0;
+}
+
 async function readVisibleToastTexts(page) {
   const selectors = [
     '[role="alert"]',
@@ -826,6 +891,25 @@ async function createOneAdGroup(page, group, idx) {
   if (!kwOk) {
     await captureDiagnostics(page, `${label}-keywords-select-failed`);
     throw new Error(`Could not set keywords for ${group.name}`);
+  }
+  const adTypes = Array.isArray(group.adTypes) && group.adTypes.length ? group.adTypes : DEFAULT_AD_TYPES;
+  const countries = Array.isArray(group.countries) && group.countries.length ? group.countries : DEFAULT_COUNTRIES;
+  const positions = Array.isArray(group.positions) && group.positions.length ? group.positions : DEFAULT_POSITIONS;
+
+  const adTypeOk = await setAdditionalDimensionValues(page, 'Ad type', adTypes);
+  if (!adTypeOk) {
+    await captureDiagnostics(page, `${label}-ad-type-targeting-failed`);
+    throw new Error(`Could not set ad type targeting for ${group.name}`);
+  }
+  const countryOk = await setAdditionalDimensionValues(page, 'Country', countries);
+  if (!countryOk) {
+    await captureDiagnostics(page, `${label}-country-targeting-failed`);
+    throw new Error(`Could not set country targeting for ${group.name}`);
+  }
+  const positionOk = await setAdditionalDimensionValues(page, 'Position', positions);
+  if (!positionOk) {
+    await captureDiagnostics(page, `${label}-position-targeting-failed`);
+    throw new Error(`Could not set position targeting for ${group.name}`);
   }
   await page.keyboard.press('Escape').catch(() => {});
   await page.waitForTimeout(20);
