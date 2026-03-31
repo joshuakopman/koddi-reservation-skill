@@ -4,7 +4,8 @@
     "start_date": "2026-04-01",
     "end_date": "2026-06-30",
     "advertiser_name": "REQUIRED_EXACT_UI_ADVERTISER_LABEL",
-    "total_impressions": 757576
+    "total_impressions": 757576,
+    "cpm_per_group": 10
   },
   "ad_groups": [
     {

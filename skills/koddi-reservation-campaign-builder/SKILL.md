@@ -25,9 +25,10 @@ Use this shape:
 - `reservation.name`
 - `reservation.start_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.end_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
-- `reservation.advertiser_name` (optional; if omitted, script selects the first advertiser option in UI)
+- `reservation.advertiser_name` (optional in JSON input; advertiser is still required by Koddi UI, and if omitted the script satisfies it by selecting the first advertiser option)
 - `reservation.total_impressions` (recommended/primary; auto-split evenly across all ad groups)
 - `reservation.reserved_impressions_per_group` (default fallback for each ad group)
+- `reservation.cpm_per_group` (optional CPM fallback; defaults to `10`)
 - `ad_groups[]` with at minimum:
   - `name`
   - `gif_url` (or `click_url`/`cta_url`)
@@ -35,6 +36,7 @@ Use this shape:
 Optional ad group fields:
 
 - `reserved_impressions`
+- `cpm` (optional per-group CPM override)
 - `creative_id`
 - `creative_friendly_name`
 - `click_url`
@@ -51,6 +53,12 @@ Impression precedence:
 - `ad_groups[].reserved_impressions`
 - `reservation.reserved_impressions_per_group`
 
+CPM precedence:
+
+- `ad_groups[].cpm`
+- `reservation.cpm_per_group` (or `reservation.cpm`)
+- default `10`
+
 ## Behavior
 
 The automation:
@@ -59,7 +67,7 @@ The automation:
 - Selects `Targeted Reservation` and `Multiple Ad Group Test Flow`
 - Selects advertiser from `Select an advertiser`
 - Fills reservation name/dates
-- Creates targeting as AND groups: search_query in the first group, then country, position, and ad type each in its own + Add new group
+- Creates targeting as AND groups: search_query in the first group, then country, position, ad type, and ad context each in its own + Add new group
 - Clicks final `Submit`
 - Verifies submit success (success modal/navigation/toast checks)
 - Captures diagnostics under `artifacts/` on failures

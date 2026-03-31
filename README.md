@@ -59,10 +59,10 @@ Top-level keys:
 - `name` (string, required)
 - `start_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `end_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
-- `advertiser_name` (string, optional; if omitted, script selects the first advertiser option in UI)
+- `advertiser_name` (string, optional in JSON input; advertiser is still required by Koddi UI, and if omitted the script satisfies it by selecting the first advertiser option)
 - `total_impressions` (number, recommended/primary; auto-split evenly across all ad groups)
 - `reserved_impressions_per_group` (number, recommended fallback)
-- `cpm_per_group` (number, optional; defaults to `0`)
+- `cpm_per_group` (number, optional; defaults to `10`)
 
 Each `ad_groups[]` item:
 
@@ -94,7 +94,7 @@ CPM precedence:
 
 - `ad_groups[].cpm` (if provided)
 - `reservation.cpm_per_group` (or `reservation.cpm`)
-- default `0`
+- default `10`
 
 ## Full Example
 
@@ -106,13 +106,12 @@ CPM precedence:
     "end_date": "2026-06-30",
     "advertiser_name": "Demo Advertiser",
     "total_impressions": 4545455,
-    "cpm_per_group": 0
+    "cpm_per_group": 10
   },
   "ad_groups": [
     {
       "name": "one of those things",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
-      "cpm": 0,
       "creative_id": "1iHDjCqdmDJOqZFYAX",
       "creative_friendly_name": "one of those things",
       "click_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
@@ -145,11 +144,10 @@ Requirements:
 - Reservation name: josh test 12
 - Start date: 04/01/2026
 - End date: 06/30/2026
-- Advertiser name: optional; include only if you need a specific advertiser label. If omitted, the automation selects the first advertiser option in the dropdown.
+- Advertiser name: optional in your JSON input. Koddi UI still requires an advertiser; if you omit it, the automation selects the first advertiser option in the dropdown.
 - Total impressions: 4,545,455 (split evenly across all ad groups)
-- CPM per ad group: 0
+- CPM per ad group: 10
 - For every ad group:
-  - cpm = 0
   - creative_id is auto-derived by parsing the ID at the end of `click_url` (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
   - creative_friendly_name = ad group name
   - click_url = gif_url

@@ -23,6 +23,9 @@ let START_DATE = process.env.START_DATE || '04/01/2026';
 let END_DATE = process.env.END_DATE || '06/30/2026';
 let ADVERTISER_NAME = process.env.ADVERTISER_NAME || '';
 let TOTAL_IMPRESSIONS = Number(process.env.TOTAL_IMPRESSIONS || 0);
+let CPM_PER_GROUP = Number.isFinite(Number(process.env.CPM_PER_GROUP)) && Number(process.env.CPM_PER_GROUP) >= 0
+  ? Number(process.env.CPM_PER_GROUP)
+  : 10;
 const KEEP_BROWSER_OPEN = process.env.KEEP_BROWSER_OPEN !== '0';
 const CAPTURE_SUCCESS_DIAGNOSTICS = process.env.CAPTURE_SUCCESS_DIAGNOSTICS === '1';
 const SLOW_MO = Number(process.env.SLOW_MO || 0);
@@ -70,12 +73,18 @@ let AD_GROUPS = DEFAULT_AD_GROUPS.map((g) => ({
   adTypes: Array.isArray(g.adTypes) && g.adTypes.length ? g.adTypes : DEFAULT_AD_TYPES,
   positions: Array.isArray(g.positions) && g.positions.length ? g.positions : DEFAULT_POSITIONS,
   adContexts: Array.isArray(g.adContexts) && g.adContexts.length ? g.adContexts : DEFAULT_AD_CONTEXTS,
-  reservedImpressions: RESERVED_IMPS_PER_GROUP
+  reservedImpressions: RESERVED_IMPS_PER_GROUP,
+  cpm: CPM_PER_GROUP
 }));
 
 function toNumber(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function toNonNegativeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 function toPositiveInt(value, fallback = 0) {
@@ -125,7 +134,7 @@ function deriveCreativeIdFromUrl(urlValue, fallback = '') {
   return String(token || fallback || '').trim();
 }
 
-function normalizeGroup(raw, fallbackImps) {
+function normalizeGroup(raw, fallbackImps, fallbackCpm) {
   const name = raw?.name || raw?.gif_name || raw?.creative_friendly_name || raw?.creative_id;
   const gifUrl = raw?.gifUrl || raw?.gif_url || raw?.click_url || raw?.cta_url || raw?.carousel_gif || raw?.carousel_gifs?.[0];
   if (!name || !gifUrl) return null;
@@ -149,6 +158,10 @@ function normalizeGroup(raw, fallbackImps) {
     positions: asArray(raw?.positions ?? raw?.position),
     adContexts: asArray(raw?.ad_contexts ?? raw?.adContexts ?? raw?.ad_context),
     reservedImpressions: toNumber(raw?.reserved_impressions ?? raw?.reservedImpressions, fallbackImps),
+    cpm: toNonNegativeNumber(
+      raw?.cpm ?? raw?.reservation_cpm ?? raw?.reservationCpm ?? raw?.cpm_per_group ?? raw?.cpmPerGroup,
+      fallbackCpm
+    ),
     creativeId: derivedCreativeId,
     creativeFriendlyName: raw?.creative_friendly_name || name,
     clickUrl: clickUrl,
@@ -176,10 +189,14 @@ async function applyCampaignOverrides() {
     reservation.total_impressions || reservation.total_reserved_impressions || parsed.total_impressions || parsed.total_reserved_impressions || TOTAL_IMPRESSIONS,
     TOTAL_IMPRESSIONS
   );
+  CPM_PER_GROUP = toNonNegativeNumber(
+    reservation.cpm_per_group ?? reservation.cpm ?? parsed.cpm_per_group ?? parsed.cpm,
+    CPM_PER_GROUP
+  );
 
   const rawGroups = parsed.ad_groups || parsed.adGroups || reservation.ad_groups || [];
   if (Array.isArray(rawGroups) && rawGroups.length > 0) {
-    const normalized = rawGroups.map((g) => normalizeGroup(g, RESERVED_IMPS_PER_GROUP)).filter(Boolean);
+    const normalized = rawGroups.map((g) => normalizeGroup(g, RESERVED_IMPS_PER_GROUP, CPM_PER_GROUP)).filter(Boolean);
     if (normalized.length === 0) {
       throw new Error(`CAMPAIGN_FILE has ad_groups but none had required fields "name" and gif URL (${CAMPAIGN_FILE})`);
     }
@@ -334,6 +351,43 @@ async function fillFirst(page, selectors, value, timeoutMs = 6000) {
         await loc.fill(String(value)).catch(() => null);
         const now = await loc.inputValue().catch(() => '');
         if (now === String(value)) return selector;
+      } catch {
+        // next
+      }
+    }
+    await page.waitForTimeout(40);
+  }
+  return null;
+}
+
+function parseNumericInput(value) {
+  const cleaned = String(value || '').replace(/,/g, '').replace(/[^0-9.+-]/g, '').trim();
+  if (!cleaned || cleaned === '.' || cleaned === '-' || cleaned === '+') return null;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function fillNumericFirst(page, selectors, value, timeoutMs = 6000) {
+  const targetNum = Number(value);
+  if (!Number.isFinite(targetNum)) return null;
+
+  const textCandidates = [targetNum.toFixed(2), String(targetNum)];
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    for (const selector of selectors) {
+      try {
+        const loc = page.locator(selector).first();
+        const visible = await loc.isVisible().catch(() => false);
+        if (!visible) continue;
+
+        for (const textValue of textCandidates) {
+          await loc.fill('').catch(() => null);
+          await loc.fill(textValue).catch(() => null);
+          const now = await loc.inputValue().catch(() => '');
+          const nowNumeric = parseNumericInput(now);
+          if (now === textValue) return selector;
+          if (nowNumeric != null && Math.abs(nowNumeric - targetNum) < 0.000001) return selector;
+        }
       } catch {
         // next
       }
@@ -1610,6 +1664,18 @@ async function createOneAdGroup(page, group, idx) {
   if (!impsSel) {
     await captureDiagnostics(page, `${label}-imps-fill-failed`);
     throw new Error(`Could not fill reserved impressions for ${group.name}`);
+  }
+
+  const cpmValue = toNonNegativeNumber(group.cpm, CPM_PER_GROUP);
+  const cpmSel = await fillNumericFirst(page, [
+    `input[data-test="adgroup.${adgroupNum}.reservation_cpm-field--input"]`,
+    `input[name="adgroup.${adgroupNum}.reservation_cpm"]`,
+    'input[data-test$=".reservation_cpm-field--input"]',
+    '[data-test$=".reservation_cpm-field--input"] input'
+  ], cpmValue, 2200);
+  if (!cpmSel) {
+    await captureDiagnostics(page, `${label}-cpm-fill-failed`);
+    throw new Error(`Could not fill CPM for ${group.name}`);
   }
 
   const clickUrl = group.clickUrl || group.gifUrl;
