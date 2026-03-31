@@ -166,7 +166,7 @@ Requirements:
   - creative_friendly_name = ad group name
   - click_url is optional; include only when you want it set
   - cta_text is optional; include only when you want it set
-  - cta_url = gif_url
+  - cta_url is optional (if omitted, automation defaults to `gif_url`)
   - carousel_gifs = [gif_url]
   - countries = ["United States"]
   - positions = ["Position 1"]
@@ -181,6 +181,8 @@ Ad groups (5):
 1) one of those things - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
    campaign_type: search
    ad_types: ["API: GIF"]
+   click_url: https://www.amcplus.com/pages/prestige/
+   cta_text: Watch Now
 2) who's in charge? - https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
    campaign_type: search
    ad_types: ["API: GIF"]
