@@ -4,12 +4,14 @@
     "start_date": "2026-04-01",
     "end_date": "2026-06-30",
     "advertiser_name": "REQUIRED_EXACT_UI_ADVERTISER_LABEL",
+    "campaign_type": "search",
     "total_impressions": 757576,
     "cpm_per_group": 10
   },
   "ad_groups": [
     {
       "name": "one of those things",
+      "campaign_type": "search",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
       "creative_id": "1iHDjCqdmDJOqZFYAX",
       "creative_friendly_name": "one of those things",
@@ -34,6 +36,7 @@
     },
     {
       "name": "who's in charge?",
+      "campaign_type": "search",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M",
       "creative_id": "qHe3kPRC3GeRZUIA5M",
       "creative_friendly_name": "who's in charge?",
@@ -59,6 +62,7 @@
     {
       "name": "sus",
       "gif_url": "https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c",
+      "campaign_type": "trending",
       "creative_id": "6ZxKFYxtMFkkjTvQ0c",
       "creative_friendly_name": "sus",
       "click_url": "https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c",
@@ -83,6 +87,7 @@
     {
       "name": "so proud",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M",
+      "campaign_type": "banner",
       "creative_id": "lhKDuY8bhcPRwKsL7M",
       "creative_friendly_name": "so proud",
       "click_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M",
@@ -97,6 +102,11 @@
       "ad_contexts": [
         "*"
       ],
+      "ono_view_types": [
+        "Details Page",
+        "Home Page",
+        "Search Page"
+      ],
       "countries": [
         "United States"
       ],
@@ -106,6 +116,7 @@
     },
     {
       "name": "oh shit",
+      "campaign_type": "search",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5",
       "creative_id": "d6OvvJSLKz7vhtX8t5",
       "creative_friendly_name": "oh shit",

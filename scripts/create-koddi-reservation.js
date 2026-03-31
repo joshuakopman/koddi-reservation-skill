@@ -34,10 +34,14 @@ const TARGETING_SETTLE_MS = Number(process.env.TARGETING_SETTLE_MS || 350);
 const COUNTRY_PICK_DELAY_MS = Number(process.env.COUNTRY_PICK_DELAY_MS || 250);
 const ATTRIBUTE_LOAD_WAIT_MS = Number(process.env.ATTRIBUTE_LOAD_WAIT_MS || 450);
 const TARGETING_GROUP_STEP_DELAY_MS = Number(process.env.TARGETING_GROUP_STEP_DELAY_MS || 500);
+const DEFAULT_CAMPAIGN_TYPE = 'search';
+const DEFAULT_TRENDING_KEYWORDS = ['# giphytrending #'];
 const DEFAULT_COUNTRIES = ['United States'];
 const DEFAULT_AD_TYPES = ['API: GIF'];
+const DEFAULT_BANNER_AD_TYPES = ['Banner'];
 const DEFAULT_POSITIONS = ['Position 1'];
 const DEFAULT_AD_CONTEXTS = ['*'];
+const DEFAULT_ONO_VIEW_TYPES = ['Details Page', 'Home Page', 'Search Page'];
 
 const DEFAULT_AD_GROUPS = [
   {
@@ -68,10 +72,12 @@ const DEFAULT_AD_GROUPS = [
 ];
 let AD_GROUPS = DEFAULT_AD_GROUPS.map((g) => ({
   ...g,
+  campaignType: DEFAULT_CAMPAIGN_TYPE,
   countries: Array.isArray(g.countries) && g.countries.length ? g.countries : DEFAULT_COUNTRIES,
   adTypes: Array.isArray(g.adTypes) && g.adTypes.length ? g.adTypes : DEFAULT_AD_TYPES,
   positions: Array.isArray(g.positions) && g.positions.length ? g.positions : DEFAULT_POSITIONS,
   adContexts: Array.isArray(g.adContexts) && g.adContexts.length ? g.adContexts : DEFAULT_AD_CONTEXTS,
+  onoViewTypes: Array.isArray(g.onoViewTypes) && g.onoViewTypes.length ? g.onoViewTypes : [],
   reservedImpressions: RESERVED_IMPS_PER_GROUP,
   cpm: CPM_PER_GROUP
 }));
@@ -90,6 +96,15 @@ function toPositiveInt(value, fallback = 0) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.floor(n);
+}
+
+function normalizeCampaignType(value, fallback = DEFAULT_CAMPAIGN_TYPE) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === 'search') return 'search';
+  if (raw === 'trending') return 'trending';
+  if (raw === 'banner' || raw === 'banners') return 'banner';
+  return fallback;
 }
 
 function distributeImpressionsEvenly(totalImpressions, groupCount) {
@@ -151,11 +166,13 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
   return {
     name: String(name),
     gifUrl: String(gifUrl),
+    campaignType: normalizeCampaignType(raw?.campaign_type ?? raw?.campaignType, DEFAULT_CAMPAIGN_TYPE),
     keywords: Array.isArray(raw?.keywords) ? raw.keywords : [],
     countries: asArray(raw?.countries ?? raw?.country),
     adTypes: asArray(raw?.ad_types ?? raw?.adTypes ?? raw?.ad_type),
     positions: asArray(raw?.positions ?? raw?.position),
     adContexts: asArray(raw?.ad_contexts ?? raw?.adContexts ?? raw?.ad_context),
+    onoViewTypes: asArray(raw?.ono_view_types ?? raw?.onoViewTypes ?? raw?.ono_view_type ?? raw?.onoViewType),
     reservedImpressions: toNumber(raw?.reserved_impressions ?? raw?.reservedImpressions, fallbackImps),
     cpm: toNonNegativeNumber(
       raw?.cpm ?? raw?.reservation_cpm ?? raw?.reservationCpm ?? raw?.cpm_per_group ?? raw?.cpmPerGroup,
@@ -195,12 +212,25 @@ async function applyCampaignOverrides() {
 
   const rawGroups = parsed.ad_groups || parsed.adGroups || reservation.ad_groups || [];
   if (Array.isArray(rawGroups) && rawGroups.length > 0) {
+    const missingCampaignTypeIndexes = rawGroups
+      .map((g, idx) => ({ idx, type: g?.campaign_type ?? g?.campaignType }))
+      .filter((x) => !String(x.type ?? '').trim())
+      .map((x) => x.idx + 1);
+    if (missingCampaignTypeIndexes.length > 0) {
+      console.warn(`No campaign_type provided for ad_groups index(es) ${missingCampaignTypeIndexes.join(', ')}; defaulting those groups to "search".`);
+    }
+
     const normalized = rawGroups.map((g) => normalizeGroup(g, RESERVED_IMPS_PER_GROUP, CPM_PER_GROUP)).filter(Boolean);
     if (normalized.length === 0) {
       throw new Error(`CAMPAIGN_FILE has ad_groups but none had required fields "name" and gif URL (${CAMPAIGN_FILE})`);
     }
     AD_GROUPS = normalized;
   }
+
+  AD_GROUPS = AD_GROUPS.map((g) => ({
+    ...g,
+    campaignType: normalizeCampaignType(g.campaignType, DEFAULT_CAMPAIGN_TYPE)
+  }));
 
   if (TOTAL_IMPRESSIONS > 0 && AD_GROUPS.length > 0) {
     const splits = distributeImpressionsEvenly(TOTAL_IMPRESSIONS, AD_GROUPS.length);
@@ -217,6 +247,7 @@ async function applyCampaignOverrides() {
   if (!String(ADVERTISER_NAME || '').trim()) {
     console.log('No advertiser_name provided; script will select the first advertiser option in UI.');
   }
+  console.log(`Using ad-group campaign types: ${AD_GROUPS.map((g, idx) => `${idx + 1}:${g.campaignType}`).join(', ')}`);
 }
 
 async function launchBrowserContext() {
@@ -908,9 +939,16 @@ async function setExactAttributeSelections(page, panel, values = [], opts = {}) 
   const retryDelayMs = Number.isFinite(opts.retryDelayMs) ? Math.max(30, Math.floor(opts.retryDelayMs)) : 120;
 
   const unmatched = [];
-  for (const value of normalizedTargets) {
+  for (let valueIndex = 0; valueIndex < normalizedTargets.length; valueIndex += 1) {
+    const rawValue = cleanValues[valueIndex];
+    const value = normalizedTargets[valueIndex];
     let matched = false;
     for (let attempt = 0; attempt < maxAttemptsPerValue && !matched; attempt += 1) {
+      if (hasSearch) {
+        await searchInput.fill('').catch(() => {});
+        await searchInput.fill(rawValue).catch(() => {});
+        await page.waitForTimeout(55);
+      }
       matched = await panel.evaluate((root, needleValue) => {
         const normalizeText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
         const canonicalText = (s) => normalizeText(s).replace(/[^a-z0-9]+/g, ' ').trim();
@@ -952,6 +990,9 @@ async function setExactAttributeSelections(page, panel, values = [], opts = {}) 
       if (matched) break;
       await page.mouse.wheel(0, 420).catch(() => {});
       await page.waitForTimeout(retryDelayMs);
+    }
+    if (hasSearch) {
+      await searchInput.fill('').catch(() => {});
     }
     if (!matched) unmatched.push(value);
   }
@@ -1151,52 +1192,11 @@ async function setKeywords(page, targetCount = 20, requestedKeywords = [], opts 
 
   const desiredKeywords = dedupeStrings(requestedKeywords).slice(0, targetCount);
 
-  const selectKeywordFromVisibleRows = async (keyword) => {
-    const needle = normalizeUiText(keyword);
-    return attributePanel.evaluate((root, needleValue) => {
-      const normalizeText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
-      const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
-      for (const container of containers) {
-        const button = container.querySelector('button[role="checkbox"]');
-        if (!button) continue;
-        const parent = container.parentElement;
-        const siblingText = normalizeText(
-          Array.from(parent?.children || [])
-            .filter((el) => el !== container)
-            .map((el) => el.textContent || '')
-            .join(' ')
-        );
-        const rowText = siblingText || normalizeText(parent?.textContent || '');
-        if (!rowText.includes(needleValue)) continue;
-        const isChecked = button.getAttribute('aria-checked') === 'true';
-        if (!isChecked) {
-          button.click();
-        }
-        return button.getAttribute('aria-checked') === 'true';
-      }
-      return false;
-    }, needle).catch(() => false);
-  };
-
   if (desiredKeywords.length > 0) {
-    let selectedFromDesired = 0;
-    const missingKeywords = [];
-
-    for (const keyword of desiredKeywords) {
-      if (Date.now() - startedAt > maxMs) break;
-      if (hasSearch) {
-        await searchInput.fill('').catch(() => {});
-        await searchInput.fill(keyword).catch(() => {});
-        await page.waitForTimeout(70);
-      }
-
-      const matched = await selectKeywordFromVisibleRows(keyword);
-      if (!matched) {
-        missingKeywords.push(keyword);
-        continue;
-      }
-      selectedFromDesired += 1;
-    }
+    const exactSelection = await setExactAttributeSelections(page, attributePanel, desiredKeywords, {
+      maxAttemptsPerValue: 8,
+      retryDelayMs: 120
+    });
 
     if (hasSearch) {
       await searchInput.fill('').catch(() => {});
@@ -1204,10 +1204,14 @@ async function setKeywords(page, targetCount = 20, requestedKeywords = [], opts 
     await page.keyboard.press('Escape').catch(() => {});
     await page.keyboard.press('Escape').catch(() => {});
 
-    if (DEBUG_KEYWORD_FAILURES && missingKeywords.length > 0) {
-      console.warn(`Requested keywords not found in UI: ${missingKeywords.join(', ')}`);
+    if (DEBUG_KEYWORD_FAILURES && !exactSelection.ok) {
+      const unmatched = exactSelection.unmatched || [];
+      const details = unmatched.length
+        ? `unmatched keywords: ${unmatched.join(', ')}`
+        : `matched=${exactSelection.matchedCount}, checked=${exactSelection.checkedCount}, expected=${desiredKeywords.length}`;
+      console.warn(`Requested keywords were not set exactly for this group (${details})`);
     }
-    return selectedFromDesired > 0;
+    return exactSelection.ok;
   }
 
   let totalChecked = 0;
@@ -1254,10 +1258,12 @@ async function getKeywordSelectionCount(page, targetGroupIndex = 0) {
 async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, requestedKeywords = [], opts = {}) {
   const targetGroupIndex = Number.isInteger(opts.targetGroupIndex) ? opts.targetGroupIndex : 0;
   const adgroupNum = Number.isInteger(opts.adgroupNum) ? opts.adgroupNum : null;
+  const expectedSelectionCount = dedupeStrings(requestedKeywords).slice(0, targetCount).length;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const ok = await setKeywords(page, targetCount, requestedKeywords, { targetGroupIndex, adgroupNum });
     const selectedCount = await getKeywordSelectionCount(page, targetGroupIndex);
-    if (ok && selectedCount > 0) return true;
+    if (ok && expectedSelectionCount > 0 && selectedCount === expectedSelectionCount) return true;
+    if (ok && expectedSelectionCount === 0 && selectedCount > 0) return true;
     await page.keyboard.press('Escape').catch(() => {});
     await page.waitForTimeout(140);
   }
@@ -1267,7 +1273,8 @@ async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, reques
 async function setAdditionalDimensionValues(page, dimensionName, values = [], opts = {}) {
   const cleanValues = dedupeStrings(values);
   const normalizedDimName = normalizeUiText(dimensionName);
-  const selectAllRequested = normalizedDimName === 'ad context' && (
+  const supportsSelectAll = normalizedDimName === 'ad context' || normalizedDimName === 'ono view type';
+  const selectAllRequested = supportsSelectAll && (
     cleanValues.length === 0
     || cleanValues.some((v) => {
       const normalized = normalizeUiText(v);
@@ -1295,7 +1302,8 @@ async function setAdditionalDimensionValues(page, dimensionName, values = [], op
     'Ad type': ['Ad type', 'ad type', 'ad_type'],
     Country: ['Country', 'country'],
     Position: ['Position', 'position'],
-    'Ad Context': ['Ad Context', 'ad context', 'ad_context']
+    'Ad Context': ['Ad Context', 'ad context', 'ad_context'],
+    'OnO View Type': ['OnO View Type', 'OnO view type', 'OnO View type', 'ono view type', 'ono_view_type', 'onoviewtype']
   };
   const labels = dimensionAliases[dimensionName] || [dimensionName];
 
@@ -1539,6 +1547,29 @@ async function resetTargetingGroupsForAdGroup(page) {
     await page.waitForTimeout(90);
   }
 
+  // Some UI states carry over selected attributes (for example "+22 selected")
+  // even when only one dimension row remains. Keep removing that row until the
+  // first row is reset to an empty "Select dimension" state.
+  for (let pass = 0; pass < 5; pass += 1) {
+    const trigger = firstGroup
+      .locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button')
+      .first();
+    const triggerText = normalizeUiText(
+      (await trigger.textContent().catch(() => '')) || (await trigger.innerText().catch(() => ''))
+    );
+    if (triggerText.includes('select dimension')) {
+      return true;
+    }
+
+    const removeSingleDim = firstGroup
+      .locator('[data-testid="remove-dimension-btn--button"], [data-test="remove-dimension-btn"], button[aria-label="Remove dimension"]')
+      .first();
+    const canRemove = await removeSingleDim.isVisible().catch(() => false);
+    if (!canRemove) break;
+    await removeSingleDim.click({ force: true, timeout: 700 }).catch(() => null);
+    await page.waitForTimeout(120);
+  }
+
   return true;
 }
 
@@ -1691,46 +1722,73 @@ async function createOneAdGroup(page, group, idx) {
   await fillFirst(page, ['input[data-test="6326-CTA URL--input"]'], group.ctaUrl || group.gifUrl).catch(() => null);
   await dismissDatePickerPopover(page, adgroupNum);
 
-  if (Array.isArray(group.keywords) && group.keywords.length > 0) {
-    console.log(`Using ${group.keywords.length} requested keyword(s) for ${group.name}.`);
+  const resolvedCampaignType = normalizeCampaignType(group.campaignType, DEFAULT_CAMPAIGN_TYPE);
+  const shouldApplySearchQueryTargeting = resolvedCampaignType !== 'banner';
+  let requestedKeywords = Array.isArray(group.keywords) ? group.keywords : [];
+  if (resolvedCampaignType === 'trending') {
+    requestedKeywords = [...DEFAULT_TRENDING_KEYWORDS];
+    console.log(`Campaign type "trending" for ${group.name}; forcing keywords to: ${requestedKeywords.join(', ')}`);
+  }
+
+  if (shouldApplySearchQueryTargeting) {
+    if (Array.isArray(requestedKeywords) && requestedKeywords.length > 0) {
+      console.log(`Using ${requestedKeywords.length} requested keyword(s) for ${group.name}.`);
+    } else {
+      console.log(`No keywords provided for ${group.name}; selecting random keywords in UI.`);
+    }
+    const kwOk = await setKeywordsWithRetry(page, 20, 3, requestedKeywords || [], { targetGroupIndex: 0, adgroupNum });
+    if (!kwOk) {
+      await captureDiagnostics(page, `${label}-keywords-select-failed`);
+      throw new Error(`Could not set keywords for ${group.name}`);
+    }
+    // Give the targeting UI a beat to commit search_query selections before creating the next group.
+    if (TARGETING_SETTLE_MS > 0) {
+      await page.waitForTimeout(TARGETING_SETTLE_MS);
+    }
   } else {
-    console.log(`No keywords provided for ${group.name}; selecting random keywords in UI.`);
-  }
-  const kwOk = await setKeywordsWithRetry(page, 20, 3, group.keywords || [], { targetGroupIndex: 0, adgroupNum });
-  if (!kwOk) {
-    await captureDiagnostics(page, `${label}-keywords-select-failed`);
-    throw new Error(`Could not set keywords for ${group.name}`);
-  }
-  // Give the targeting UI a beat to commit search_query selections before creating the next group.
-  if (TARGETING_SETTLE_MS > 0) {
-    await page.waitForTimeout(TARGETING_SETTLE_MS);
+    console.log(`Campaign type "banner" for ${group.name}; skipping search_query targeting group.`);
   }
 
   const countries = Array.isArray(group.countries) && group.countries.length ? group.countries : DEFAULT_COUNTRIES;
   const positions = Array.isArray(group.positions) && group.positions.length ? group.positions : DEFAULT_POSITIONS;
   const adTypesRaw = Array.isArray(group.adTypes) && group.adTypes.length ? group.adTypes : DEFAULT_AD_TYPES;
   const adContexts = Array.isArray(group.adContexts) && group.adContexts.length ? group.adContexts : DEFAULT_AD_CONTEXTS;
+  const onoViewTypesRaw = Array.isArray(group.onoViewTypes) && group.onoViewTypes.length ? group.onoViewTypes : [];
+  const onoViewTypes = resolvedCampaignType === 'banner'
+    ? (onoViewTypesRaw.length ? onoViewTypesRaw : DEFAULT_ONO_VIEW_TYPES)
+    : onoViewTypesRaw;
   let adTypes = adTypesRaw;
   const norm = (v) => String(v || '').toLowerCase().trim();
-  const countrySet = new Set(countries.map(norm));
-  const adTypeLooksLikeCountry = adTypesRaw.some((v) => countrySet.has(norm(v)));
-  if (adTypeLooksLikeCountry) {
-    console.warn(`Ad type values looked like country values for ${group.name}; forcing default ad type ${DEFAULT_AD_TYPES.join(', ')}`);
-    adTypes = DEFAULT_AD_TYPES;
+  if (resolvedCampaignType === 'banner') {
+    if (adTypesRaw.length && !adTypesRaw.some((v) => norm(v) === 'banner')) {
+      console.warn(`Campaign type "banner" overrides ad_types for ${group.name}; forcing ad type ${DEFAULT_BANNER_AD_TYPES.join(', ')}`);
+    }
+    adTypes = DEFAULT_BANNER_AD_TYPES;
+  } else {
+    const countrySet = new Set(countries.map(norm));
+    const adTypeLooksLikeCountry = adTypesRaw.some((v) => countrySet.has(norm(v)));
+    if (adTypeLooksLikeCountry) {
+      console.warn(`Ad type values looked like country values for ${group.name}; forcing default ad type ${DEFAULT_AD_TYPES.join(', ')}`);
+      adTypes = DEFAULT_AD_TYPES;
+    }
   }
 
   await dismissDatePickerPopover(page, adgroupNum);
-  const countryGroupAdded = await addNewTargetingGroup(page);
-  if (!countryGroupAdded?.ok) {
-    await captureDiagnostics(page, `${label}-country-group-add-failed`);
-    throw new Error(`Could not add country targeting group for ${group.name}`);
+  let countryTargetGroupIndex = 0;
+  if (shouldApplySearchQueryTargeting) {
+    const countryGroupAdded = await addNewTargetingGroup(page);
+    if (!countryGroupAdded?.ok) {
+      await captureDiagnostics(page, `${label}-country-group-add-failed`);
+      throw new Error(`Could not add country targeting group for ${group.name}`);
+    }
+    countryTargetGroupIndex = countryGroupAdded.index;
   }
   if (COUNTRY_PICK_DELAY_MS > 0) {
     await page.waitForTimeout(COUNTRY_PICK_DELAY_MS);
   }
   const countryOk = await setAdditionalDimensionValues(page, 'Country', countries, {
     addDimensionWithinGroup: false,
-    targetGroupIndex: countryGroupAdded.index,
+    targetGroupIndex: countryTargetGroupIndex,
     adgroupNum
   });
   if (!countryOk) {
@@ -1790,6 +1848,26 @@ async function createOneAdGroup(page, group, idx) {
   if (!adContextOk) {
     await captureDiagnostics(page, `${label}-ad-context-targeting-failed`);
     throw new Error(`Could not set ad context targeting for ${group.name}`);
+  }
+  if (TARGETING_GROUP_STEP_DELAY_MS > 0) {
+    await page.waitForTimeout(TARGETING_GROUP_STEP_DELAY_MS);
+  }
+
+  if (Array.isArray(onoViewTypes) && onoViewTypes.length > 0) {
+    const onoViewTypeGroupAdded = await addNewTargetingGroup(page);
+    if (!onoViewTypeGroupAdded?.ok) {
+      await captureDiagnostics(page, `${label}-ono-view-type-group-add-failed`);
+      throw new Error(`Could not add OnO View Type targeting group for ${group.name}`);
+    }
+    const onoViewTypeOk = await setAdditionalDimensionValues(page, 'OnO View Type', onoViewTypes, {
+      addDimensionWithinGroup: false,
+      targetGroupIndex: onoViewTypeGroupAdded.index,
+      adgroupNum
+    });
+    if (!onoViewTypeOk) {
+      await captureDiagnostics(page, `${label}-ono-view-type-targeting-failed`);
+      throw new Error(`Could not set OnO View Type targeting for ${group.name}`);
+    }
   }
   const orphanedGroupsRemoved = await removeOrphanedEmptyTargetingGroups(page, 3);
   if (orphanedGroupsRemoved > 0) {

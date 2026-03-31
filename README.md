@@ -68,6 +68,7 @@ Each `ad_groups[]` item:
 
 - `name` (string, required)
 - `gif_url` (string, required if click/cta/carousel not provided)
+- `campaign_type` (string, optional per ad group; `search` default, or `trending`/`banner`)
 - `reserved_impressions` (number, optional; falls back to reservation default)
 - `cpm` (number, optional; falls back to reservation/default CPM)
 - `creative_id` (string, optional input only; runtime derives Creative ID from the last token in the final `click_url` path segment)
@@ -76,13 +77,23 @@ Each `ad_groups[]` item:
 - `cta_url` (string, optional; defaults to `gif_url`)
 - `carousel_gif` (string, optional)
 - `carousel_gifs` (string array, optional; first value used)
-- `ad_types` (string array, optional; defaults to `["API: GIF"]`; applied in its own AND targeting group)
+- `ad_types` (string array, optional; defaults to `["API: GIF"]` for search/trending, and is forced to `["Banner"]` for banner campaign type; applied in its own AND targeting group)
 - `ad_contexts` (string array, optional; defaults to `["*"]` which selects all available Ad Context checkboxes; applied in its own AND targeting group)
+- `ono_view_types` (string array, optional; used for Banner flows in an `OnO View Type` targeting group)
 - `countries` (string array, optional; defaults to `["United States"]`; applied in its own AND targeting group)
 - `positions` (string array, optional; defaults to `["Position 1"]`; applied in its own AND targeting group)
 - `keywords` (array, optional)
-  - If provided: script attempts to select those exact keywords in Koddi UI.
-  - If omitted or empty: script randomly selects keywords in UI for test coverage.
+  - For `search`: if provided, script attempts exact keyword selection; if omitted/empty, script randomizes keywords in UI.
+  - For `trending`: script always uses exactly `["# giphytrending #"]`.
+  - For `banner`: script skips `search_query` keyword targeting (keywords in JSON are ignored for banner).
+
+Campaign type behavior:
+
+- `search`: uses existing keyword behavior + country/position/ad type/ad context targeting groups.
+- `trending`: same as search, except keywords are forced to `# giphytrending #` only.
+- `banner`: forces ad type to `Banner`, skips `search_query`, and adds an `OnO View Type` targeting group.
+- For banner, if `ono_view_types` is omitted, defaults to `["Details Page", "Home Page", "Search Page"]`.
+- You can mix all three in one reservation by setting `ad_groups[].campaign_type` per ad group.
 
 Impression precedence:
 
@@ -111,6 +122,7 @@ CPM precedence:
   "ad_groups": [
     {
       "name": "one of those things",
+      "campaign_type": "search",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
       "creative_id": "1iHDjCqdmDJOqZFYAX",
       "creative_friendly_name": "one of those things",
@@ -147,6 +159,7 @@ Requirements:
 - Advertiser name: optional in your JSON input. Koddi UI still requires an advertiser; if you omit it, the automation selects the first advertiser option in the dropdown.
 - Total impressions: 4,545,455 (split evenly across all ad groups)
 - CPM per ad group: 10
+- For every ad group, set `campaign_type` as needed: defaults to `search`, or use `trending`/`banner`.
 - For every ad group:
   - creative_id is auto-derived by parsing the ID at the end of `click_url` (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
   - creative_friendly_name = ad group name
@@ -155,9 +168,12 @@ Requirements:
   - carousel_gifs = [gif_url]
   - countries = ["United States"]
   - positions = ["Position 1"]
-  - ad_types = ["API: GIF"]
+  - if campaign_type is search or trending: set ad_types = ["API: GIF"] (or a provided ad type override)
+  - if campaign_type is banner: ad_types should be Banner (script forces this automatically)
   - ad_contexts = ["*"] (means select all Ad Context checkboxes)
-  - keywords = [] (leave empty so automation randomizes keywords in Koddi UI)
+  - if campaign_type is search: keywords can be [] to randomize, or provided explicitly
+  - if campaign_type is trending: keywords should be omitted (script forces ["# giphytrending #"])
+  - if campaign_type is banner: do not include keywords (banner skips search_query targeting)
 
 Ad groups (5):
 1) one of those things - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
