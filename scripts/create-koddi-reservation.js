@@ -13,6 +13,10 @@ const CHROME_PROFILE_DIRECTORY = process.env.CHROME_PROFILE_DIRECTORY || '';
 const CLEAR_SINGLETON_LOCKS = process.env.CLEAR_SINGLETON_LOCKS === '1';
 const ADGROUPS_URL = process.env.ADGROUPS_URL || 'https://k1-uat.koddi.app/#/clients/3500/reservations';
 const RESERVE_URL = process.env.RESERVE_URL || 'https://k1-uat.koddi.app/#/clients/3500/reservations/reserve';
+const LOGIN_URL = process.env.LOGIN_URL || 'https://k1-uat.koddi.app/#/giphy/login';
+const LOGIN_READY_URL_REGEX = /\/clients\/3500\/dashboard\/publisher/i;
+const READY_APP_URL_REGEX = /\/clients\/3500\/(dashboard\/publisher|reservations)/i;
+const LOGIN_WAIT_MS = Number(process.env.LOGIN_WAIT_MS || 300000);
 let RESERVED_IMPS_PER_GROUP = Number(process.env.RESERVED_IMPS_PER_GROUP || 757576);
 let RESERVATION_NAME = process.env.RESERVATION_NAME || 'josh test';
 let START_DATE = process.env.START_DATE || '04/01/2026';
@@ -20,6 +24,7 @@ let END_DATE = process.env.END_DATE || '06/30/2026';
 let ADVERTISER_NAME = process.env.ADVERTISER_NAME || '';
 let TOTAL_IMPRESSIONS = Number(process.env.TOTAL_IMPRESSIONS || 0);
 const KEEP_BROWSER_OPEN = process.env.KEEP_BROWSER_OPEN !== '0';
+const CAPTURE_SUCCESS_DIAGNOSTICS = process.env.CAPTURE_SUCCESS_DIAGNOSTICS === '1';
 const SLOW_MO = Number(process.env.SLOW_MO || 0);
 const DEBUG_KEYWORD_FAILURES = process.env.DEBUG_KEYWORD_FAILURES === '1';
 const PROFILE_FALLBACK = process.env.PLAYWRIGHT_PROFILE_FALLBACK === '1';
@@ -422,16 +427,20 @@ async function hasFormConfigError(page) {
 }
 
 async function isLoginPage(page) {
+  const url = page.url();
+  const onKoddiLoginRoute = /\/giphy\/login/i.test(url);
+  const onAuthProviderLoginRoute = /:\/\/login\.uat\.koddi\.io\//i.test(url) || /\/u\/login\//i.test(url);
   const hasPassword = await page.locator('input[type="password"], input[name="password"]').first().isVisible().catch(() => false);
+  const hasIdentifierForm = await page.locator('form._form-login-id, form[data-form-primary="true"]').first().isVisible().catch(() => false);
   const hasKoddiLoginText = await page.getByText(/Log in to Koddi|Welcome/i).first().isVisible().catch(() => false);
-  return hasPassword || hasKoddiLoginText;
+  return onKoddiLoginRoute || onAuthProviderLoginRoute || hasPassword || hasIdentifierForm || hasKoddiLoginText;
 }
 
 async function waitUntilLoggedIn(page, timeoutMs = 120000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const loginVisible = await isLoginPage(page);
-    if (!loginVisible) return true;
+    const url = page.url();
+    if (LOGIN_READY_URL_REGEX.test(url) || READY_APP_URL_REGEX.test(url)) return true;
     await page.waitForTimeout(500);
   }
   return false;
@@ -507,7 +516,9 @@ async function clickCreateReservation(page, timeoutMs = 12000) {
 }
 
 async function ensureRequiredReservationSelections(page) {
-  const advertiserOk = await selectFromPlaceholder(page, 'Select an advertiser', ADVERTISER_NAME);
+  // Always pick the first advertiser option from the dropdown.
+  // We intentionally avoid typing/searching here to keep selection deterministic in this UI.
+  const advertiserOk = await selectFromPlaceholder(page, 'Select an advertiser', '');
   if (!advertiserOk) return false;
 
   // These may or may not exist depending on Koddi configuration; select if present.
@@ -517,23 +528,17 @@ async function ensureRequiredReservationSelections(page) {
 }
 
 async function gotoAdGroupsStepFromReservations(page) {
-  await page.goto(ADGROUPS_URL, { waitUntil: 'domcontentloaded' }).catch(() => null);
-  await page.waitForTimeout(350);
-
-  let loginVisible = await isLoginPage(page);
-  if (loginVisible) {
+  const alreadyReady = READY_APP_URL_REGEX.test(page.url());
+  if (!alreadyReady) {
+    await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' }).catch(() => null);
+    await page.waitForTimeout(350);
     console.log('Koddi login required for this run. Waiting for login completion in browser...');
-    const ok = await waitUntilLoggedIn(page, 120000);
+    const ok = await waitUntilLoggedIn(page, LOGIN_WAIT_MS);
     if (!ok) return false;
+  }
+  if (!/\/reservations/i.test(page.url())) {
     await page.goto(ADGROUPS_URL, { waitUntil: 'domcontentloaded' }).catch(() => null);
     await page.waitForTimeout(350);
-    loginVisible = await isLoginPage(page);
-    if (loginVisible) return false;
-  }
-
-  if (!/\/reservations/i.test(page.url())) {
-    await clickFirst(page, ['[data-test="navigation-reservations"]'], 2500).catch(() => null);
-    await page.waitForTimeout(400);
   }
 
   const onExperienceStep = await page.getByText(/Targeted Reservation/i).first().isVisible().catch(() => false);
@@ -1738,7 +1743,7 @@ async function main() {
     page = await context.newPage();
   }
   if (page.url() === 'about:blank') {
-    await page.goto(ADGROUPS_URL, { waitUntil: 'domcontentloaded' }).catch(() => null);
+    await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' }).catch(() => null);
   }
   await page.waitForTimeout(150);
 
@@ -1784,6 +1789,9 @@ async function main() {
   }
   if (submitResult.observedMessages.length) {
     console.log(`Submit verification messages: ${submitResult.observedMessages.join(' | ')}`);
+  }
+  if (CAPTURE_SUCCESS_DIAGNOSTICS) {
+    await captureDiagnostics(page, `submit-success-${submitResult.reason}`);
   }
 
   if (KEEP_BROWSER_OPEN) {
