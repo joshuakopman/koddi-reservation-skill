@@ -1,0 +1,4 @@
+interface:
+  display_name: "Koddi Reservation Builder"
+  short_description: "Create Koddi reservations from campaign JSON."
+  default_prompt: "Create a Koddi targeted reservation and ad groups from campaign input using the bundled script."

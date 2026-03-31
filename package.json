@@ -1,0 +1,12 @@
+{
+  "name": "koddi-ui-automation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Small Playwright helpers for Koddi UI tasks",
+  "scripts": {
+    "create:koddi-reservation": "node scripts/create-koddi-reservation.js"
+  },
+  "dependencies": {
+    "playwright": "^1.54.2"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "reservation": {
+    "name": "AV Search Rotational",
+    "start_date": "2026-04-01",
+    "end_date": "2026-06-30",
+    "advertiser_name": "Demo Advertiser",
+    "reserved_impressions_per_group": 757576
+  },
+  "ad_groups": [
+    {
+      "name": "one of those things",
+      "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
+      "reserved_impressions": 757576,
+      "creative_id": "one of those things",
+      "creative_friendly_name": "one of those things",
+      "click_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
+      "cta_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
+      "carousel_gifs": [
+        "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX"
+      ],
+      "keywords": []
+    }
+  ]
+}
