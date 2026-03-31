@@ -121,19 +121,36 @@ Runtime execution currently expects a JSON file path.
 
 But operationally, no: you can provide a plain-language campaign brief and generate JSON from it before running.
 
-Example brief:
+Copy/paste prompt non-technical users can run in Codex:
 
 ```text
-Create Koddi reservation "josh test 12" from 04/01/2026 to 06/30/2026.
-Use advertiser "Demo Advertiser".
-Use a total reservation goal of 4,545,455 impressions and split evenly across 5 ad groups.
-For each ad group, set creative id/friendly name to ad group name, and set click/cta/carousel URL to the GIF URL.
-Ad groups:
+Please generate a valid campaign JSON file for the Koddi reservation automation.
+
+Requirements:
+- Reservation name: josh test 12
+- Start date: 04/01/2026
+- End date: 06/30/2026
+- Advertiser name: REQUIRED_EXACT_UI_ADVERTISER_LABEL
+- Total impressions: 4,545,455 (split evenly across all ad groups)
+- For every ad group:
+  - creative_id = ad group name
+  - creative_friendly_name = ad group name
+  - click_url = gif_url
+  - cta_url = gif_url
+  - carousel_gifs = [gif_url]
+  - countries = ["United States"]
+  - positions = ["Position 1"]
+  - ad_types = ["API: GIF"]
+  - keywords = [] (leave empty so automation randomizes keywords in Koddi UI)
+
+Ad groups (5):
 1) one of those things - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
 2) who's in charge? - https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
 3) sus - https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c
 4) so proud - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M
 5) oh shit - https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5
+
+Output only raw JSON, no markdown.
 ```
 
 Then convert that brief into the schema above and run the script. Include `keywords` per ad group only when you want deterministic selection; otherwise leave it empty/omitted and the script will choose random keywords.
