@@ -59,7 +59,7 @@ Top-level keys:
 - `name` (string, required)
 - `start_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `end_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
-- `advertiser_name` (string, optional in JSON input; advertiser is still required by Koddi UI, and if omitted the script satisfies it by selecting the first advertiser option)
+- `advertiser_name` (string, optional in JSON input; if provided, script attempts to select that exact advertiser label. Advertiser is still required by Koddi UI, so if omitted or not found the script falls back to the first advertiser option)
 - `total_impressions` (number, recommended/primary; auto-split evenly across all ad groups)
 - `reserved_impressions_per_group` (number, recommended fallback)
 - `cpm_per_group` (number, optional; defaults to `10`)

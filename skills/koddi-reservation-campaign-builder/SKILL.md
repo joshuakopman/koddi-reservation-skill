@@ -25,7 +25,7 @@ Use this shape:
 - `reservation.name`
 - `reservation.start_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.end_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
-- `reservation.advertiser_name` (optional in JSON input; advertiser is still required by Koddi UI, and if omitted the script satisfies it by selecting the first advertiser option)
+- `reservation.advertiser_name` (optional in JSON input; if provided, script attempts to select that exact advertiser label. Advertiser is still required by Koddi UI, so if omitted or not found the script falls back to the first advertiser option)
 - `reservation.total_impressions` (recommended/primary; auto-split evenly across all ad groups)
 - `reservation.reserved_impressions_per_group` (default fallback for each ad group)
 - `reservation.cpm_per_group` (optional CPM fallback; defaults to `10`)

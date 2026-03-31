@@ -12,7 +12,6 @@ const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222';
 const CHROME_PROFILE_DIRECTORY = process.env.CHROME_PROFILE_DIRECTORY || '';
 const CLEAR_SINGLETON_LOCKS = process.env.CLEAR_SINGLETON_LOCKS === '1';
 const ADGROUPS_URL = process.env.ADGROUPS_URL || 'https://k1-uat.koddi.app/#/clients/3500/reservations';
-const RESERVE_URL = process.env.RESERVE_URL || 'https://k1-uat.koddi.app/#/clients/3500/reservations/reserve';
 const LOGIN_URL = process.env.LOGIN_URL || 'https://k1-uat.koddi.app/#/giphy/login';
 const LOGIN_READY_URL_REGEX = /\/clients\/3500\/dashboard\/publisher/i;
 const READY_APP_URL_REGEX = /\/clients\/3500\/(dashboard\/publisher|reservations)/i;
@@ -506,16 +505,6 @@ async function hasFormConfigError(page) {
   return page.getByText(/Could not find form configuration/i).first().isVisible().catch(() => false);
 }
 
-async function isLoginPage(page) {
-  const url = page.url();
-  const onKoddiLoginRoute = /\/giphy\/login/i.test(url);
-  const onAuthProviderLoginRoute = /:\/\/login\.uat\.koddi\.io\//i.test(url) || /\/u\/login\//i.test(url);
-  const hasPassword = await page.locator('input[type="password"], input[name="password"]').first().isVisible().catch(() => false);
-  const hasIdentifierForm = await page.locator('form._form-login-id, form[data-form-primary="true"]').first().isVisible().catch(() => false);
-  const hasKoddiLoginText = await page.getByText(/Log in to Koddi|Welcome/i).first().isVisible().catch(() => false);
-  return onKoddiLoginRoute || onAuthProviderLoginRoute || hasPassword || hasIdentifierForm || hasKoddiLoginText;
-}
-
 async function waitUntilLoggedIn(page, timeoutMs = 120000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -534,17 +523,33 @@ async function selectFromPlaceholder(page, placeholderText, preferredValue = '')
   await placeholder.click({ force: true }).catch(() => null);
   await page.waitForTimeout(120);
 
-  if (preferredValue) {
-    await page.keyboard.type(preferredValue, { delay: 12 }).catch(() => null);
-    await page.waitForTimeout(160);
-    const preferredClicked = await clickFirst(page, [
-      `[role="option"]:has-text("${preferredValue}")`,
-      `text=${preferredValue}`
-    ], 600);
-    if (!preferredClicked) {
-      await page.keyboard.press('Enter').catch(() => null);
+  let preferredClicked = false;
+  const preferredLabel = String(preferredValue || '').trim();
+  if (preferredLabel) {
+    const preferredExact = page
+      .locator('[role="option"], [id*="-option-"], [class*="option"]')
+      .filter({ hasText: new RegExp(`^\\s*${escapeRegExp(preferredLabel)}\\s*$`, 'i') })
+      .first();
+    const preferredVisible = await preferredExact.isVisible().catch(() => false);
+    if (preferredVisible) {
+      preferredClicked = await preferredExact.click({ force: true, timeout: 700 }).then(() => true).catch(() => false);
     }
-  } else {
+    if (!preferredClicked) {
+      const preferredContains = page
+        .locator('[role="option"], [id*="-option-"], [class*="option"]')
+        .filter({ hasText: new RegExp(escapeRegExp(preferredLabel), 'i') })
+        .first();
+      const containsVisible = await preferredContains.isVisible().catch(() => false);
+      if (containsVisible) {
+        preferredClicked = await preferredContains.click({ force: true, timeout: 700 }).then(() => true).catch(() => false);
+      }
+    }
+    if (!preferredClicked) {
+      console.warn(`Preferred value "${preferredLabel}" was not found for ${placeholderText}; falling back to first option.`);
+    }
+  }
+
+  if (!preferredClicked) {
     const picked = await clickFirst(page, [
       '[role="option"]',
       '[id*="-option-0"]',
@@ -596,9 +601,8 @@ async function clickCreateReservation(page, timeoutMs = 12000) {
 }
 
 async function ensureRequiredReservationSelections(page) {
-  // Always pick the first advertiser option from the dropdown.
-  // We intentionally avoid typing/searching here to keep selection deterministic in this UI.
-  const advertiserOk = await selectFromPlaceholder(page, 'Select an advertiser', '');
+  // If advertiser_name is provided, try to select that exact label. Otherwise pick first option.
+  const advertiserOk = await selectFromPlaceholder(page, 'Select an advertiser', ADVERTISER_NAME);
   if (!advertiserOk) return false;
 
   // These may or may not exist depending on Koddi configuration; select if present.
