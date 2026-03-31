@@ -57,7 +57,7 @@ Top-level keys:
 - `start_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `end_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `advertiser_name` (string, recommended)
-- `total_impressions` (number, optional; if set, auto-split evenly across all ad groups)
+- `total_impressions` (number, recommended/primary; auto-split evenly across all ad groups)
 - `reserved_impressions_per_group` (number, recommended fallback)
 
 Each `ad_groups[]` item:
@@ -90,14 +90,12 @@ Impression precedence:
     "start_date": "2026-04-01",
     "end_date": "2026-06-30",
     "advertiser_name": "Demo Advertiser",
-    "total_impressions": 4545455,
-    "reserved_impressions_per_group": 757576
+    "total_impressions": 4545455
   },
   "ad_groups": [
     {
       "name": "one of those things",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
-      "reserved_impressions": 757576,
       "creative_id": "one of those things",
       "creative_friendly_name": "one of those things",
       "click_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",

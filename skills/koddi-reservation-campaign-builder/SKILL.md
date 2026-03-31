@@ -26,7 +26,7 @@ Use this shape:
 - `reservation.start_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.end_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.advertiser_name` (exact advertiser option label shown in UI)
-- `reservation.total_impressions` (optional; auto-split evenly across all ad groups)
+- `reservation.total_impressions` (recommended/primary; auto-split evenly across all ad groups)
 - `reservation.reserved_impressions_per_group` (default fallback for each ad group)
 - `ad_groups[]` with at minimum:
   - `name`
