@@ -62,13 +62,15 @@ Top-level keys:
 - `advertiser_name` (string, optional; if omitted, script selects the first advertiser option in UI)
 - `total_impressions` (number, recommended/primary; auto-split evenly across all ad groups)
 - `reserved_impressions_per_group` (number, recommended fallback)
+- `cpm_per_group` (number, optional; defaults to `0`)
 
 Each `ad_groups[]` item:
 
 - `name` (string, required)
 - `gif_url` (string, required if click/cta/carousel not provided)
 - `reserved_impressions` (number, optional; falls back to reservation default)
-- `creative_id` (string, optional input only; runtime always derives Creative ID from the `click_url` slug token)
+- `cpm` (number, optional; falls back to reservation/default CPM)
+- `creative_id` (string, optional input only; runtime derives Creative ID from the last token in the final `click_url` path segment)
 - `creative_friendly_name` (string, optional; defaults to name)
 - `click_url` (string, optional; defaults to `gif_url`)
 - `cta_url` (string, optional; defaults to `gif_url`)
@@ -88,6 +90,12 @@ Impression precedence:
 - Otherwise it uses each ad group's `reserved_impressions` if present.
 - Otherwise it falls back to `reservation.reserved_impressions_per_group`.
 
+CPM precedence:
+
+- `ad_groups[].cpm` (if provided)
+- `reservation.cpm_per_group` (or `reservation.cpm`)
+- default `0`
+
 ## Full Example
 
 ```json
@@ -97,12 +105,14 @@ Impression precedence:
     "start_date": "2026-04-01",
     "end_date": "2026-06-30",
     "advertiser_name": "Demo Advertiser",
-    "total_impressions": 4545455
+    "total_impressions": 4545455,
+    "cpm_per_group": 0
   },
   "ad_groups": [
     {
       "name": "one of those things",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
+      "cpm": 0,
       "creative_id": "1iHDjCqdmDJOqZFYAX",
       "creative_friendly_name": "one of those things",
       "click_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
@@ -135,10 +145,12 @@ Requirements:
 - Reservation name: josh test 12
 - Start date: 04/01/2026
 - End date: 06/30/2026
-- Advertiser name: REQUIRED_EXACT_UI_ADVERTISER_LABEL
+- Advertiser name: optional; include only if you need a specific advertiser label. If omitted, the automation selects the first advertiser option in the dropdown.
 - Total impressions: 4,545,455 (split evenly across all ad groups)
+- CPM per ad group: 0
 - For every ad group:
-  - creative_id is auto-derived from click_url slug token (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
+  - cpm = 0
+  - creative_id is auto-derived by parsing the ID at the end of `click_url` (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
   - creative_friendly_name = ad group name
   - click_url = gif_url
   - cta_url = gif_url
