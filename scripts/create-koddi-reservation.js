@@ -499,7 +499,7 @@ function shuffledIndices(count) {
   return arr;
 }
 
-async function setKeywords(page, targetCount = 20) {
+async function setKeywords(page, targetCount = 20, requestedKeywords = []) {
   const startedAt = Date.now();
   const maxMs = 3400;
   await clickFirst(page, [
@@ -553,6 +553,50 @@ async function setKeywords(page, targetCount = 20) {
     await page.waitForTimeout(20);
   }
 
+  const desiredKeywords = [];
+  if (Array.isArray(requestedKeywords)) {
+    for (const raw of requestedKeywords) {
+      const kw = String(raw ?? '').trim();
+      if (kw && !desiredKeywords.some((x) => x.toLowerCase() === kw.toLowerCase())) desiredKeywords.push(kw);
+    }
+  }
+
+  if (desiredKeywords.length > 0) {
+    let selectedFromDesired = 0;
+    const missingKeywords = [];
+
+    for (const keyword of desiredKeywords.slice(0, targetCount)) {
+      if (Date.now() - startedAt > maxMs) break;
+      await searchInput.fill('').catch(() => {});
+      await searchInput.fill(keyword).catch(() => {});
+      await page.waitForTimeout(70);
+
+      const row = page.locator('[data-testid="attribute-select--checkbox"]', { hasText: keyword }).first();
+      const exists = (await row.count().catch(() => 0)) > 0;
+      if (!exists) {
+        missingKeywords.push(keyword);
+        continue;
+      }
+
+      const cb = row.locator('button[role="checkbox"]').first();
+      const isChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
+      if (!isChecked) {
+        await cb.click({ force: true, timeout: 300 }).catch(() => {});
+      }
+      const nowChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
+      if (nowChecked) selectedFromDesired += 1;
+    }
+
+    await searchInput.fill('').catch(() => {});
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.keyboard.press('Escape').catch(() => {});
+
+    if (DEBUG_KEYWORD_FAILURES && missingKeywords.length > 0) {
+      console.warn(`Requested keywords not found in UI: ${missingKeywords.join(', ')}`);
+    }
+    return selectedFromDesired > 0;
+  }
+
   let totalChecked = 0;
   for (let pass = 0; pass < 3 && totalChecked < targetCount; pass += 1) {
     if (Date.now() - startedAt > maxMs) break;
@@ -598,9 +642,9 @@ async function getKeywordSelectionCount(page) {
   return m2 ? Number(m2[1]) : 0;
 }
 
-async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3) {
+async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, requestedKeywords = []) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const ok = await setKeywords(page, targetCount);
+    const ok = await setKeywords(page, targetCount, requestedKeywords);
     const selectedCount = await getKeywordSelectionCount(page);
     if (ok && selectedCount > 0) return true;
     await page.keyboard.press('Escape').catch(() => {});
@@ -738,7 +782,12 @@ async function createOneAdGroup(page, group, idx) {
   await fillFirst(page, ['input[data-test="6566-Click URL--input"]'], group.clickUrl || group.gifUrl).catch(() => null);
   await fillFirst(page, ['input[data-test="6326-CTA URL--input"]'], group.ctaUrl || group.gifUrl).catch(() => null);
 
-  const kwOk = await setKeywordsWithRetry(page, 20, 3);
+  if (Array.isArray(group.keywords) && group.keywords.length > 0) {
+    console.log(`Using ${group.keywords.length} requested keyword(s) for ${group.name}.`);
+  } else {
+    console.log(`No keywords provided for ${group.name}; selecting random keywords in UI.`);
+  }
+  const kwOk = await setKeywordsWithRetry(page, 20, 3, group.keywords || []);
   if (!kwOk) {
     await captureDiagnostics(page, `${label}-keywords-select-failed`);
     throw new Error(`Could not set keywords for ${group.name}`);

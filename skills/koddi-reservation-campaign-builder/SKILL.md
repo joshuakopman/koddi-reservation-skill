@@ -39,7 +39,7 @@ Optional ad group fields:
 - `click_url`
 - `cta_url`
 - `carousel_gif` or `carousel_gifs[0]`
-- `keywords` (currently not deterministically mapped; UI random selection is used)
+- `keywords` (optional; when provided, script attempts exact keyword selection in UI; otherwise random keywords are selected)
 
 ## Behavior
 

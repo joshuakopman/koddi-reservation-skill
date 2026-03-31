@@ -70,7 +70,9 @@ Each `ad_groups[]` item:
 - `cta_url` (string, optional; defaults to `gif_url`)
 - `carousel_gif` (string, optional)
 - `carousel_gifs` (string array, optional; first value used)
-- `keywords` (array, optional; currently not deterministically mapped)
+- `keywords` (array, optional)
+  - If provided: script attempts to select those exact keywords in Koddi UI.
+  - If omitted or empty: script randomly selects keywords in UI for test coverage.
 
 ## Full Example
 
@@ -94,7 +96,8 @@ Each `ad_groups[]` item:
       "cta_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
       "carousel_gifs": [
         "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX"
-      ]
+      ],
+      "keywords": ["city", "drama", "night"]
     }
   ]
 }
@@ -121,7 +124,7 @@ Ad groups:
 5) oh shit - https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5
 ```
 
-Then convert that brief into the schema above and run the script.
+Then convert that brief into the schema above and run the script. Include `keywords` per ad group only when you want deterministic selection; otherwise leave it empty/omitted and the script will choose random keywords.
 
 ## Validate Before Running
 
