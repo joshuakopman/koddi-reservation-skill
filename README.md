@@ -177,10 +177,20 @@ Requirements:
 
 Ad groups (5):
 1) one of those things - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
+   campaign_type: search
+   ad_types: ["API: GIF"]
 2) who's in charge? - https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
+   campaign_type: search
+   ad_types: ["API: GIF"]
 3) sus - https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c
+   campaign_type: trending
+   ad_types: ["API: GIF"]
 4) so proud - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M
+   campaign_type: banner
+   ad_types: ["Banner"]
 5) oh shit - https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5
+   campaign_type: search
+   ad_types: ["API: GIF"]
 
 Output only raw JSON, no markdown.
 ```
