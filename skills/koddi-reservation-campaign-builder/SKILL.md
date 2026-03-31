@@ -40,7 +40,8 @@ Optional ad group fields:
 - `campaign_type` (optional per group; defaults to `search`, or set `trending`/`banner`)
 - `creative_id`
 - `creative_friendly_name`
-- `click_url`
+- `click_url` (optional; if omitted, Click URL is left blank in UI)
+- `cta_text` (optional; if omitted, CTA Text is left blank in UI)
 - `cta_url`
 - `carousel_gif` or `carousel_gifs[0]`
 - `ad_types` (optional string array; for `search`/`trending` defaults to `["API: GIF"]`, and for `banner` it is forced to `["Banner"]`)

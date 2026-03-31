@@ -160,8 +160,9 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
     return one ? [one] : [];
   };
 
-  const clickUrl = raw?.click_url || gifUrl;
-  const derivedCreativeId = deriveCreativeIdFromUrl(clickUrl, String(name));
+  const clickUrl = raw?.click_url ? String(raw.click_url).trim() : '';
+  const creativeIdSourceUrl = clickUrl || gifUrl;
+  const derivedCreativeId = deriveCreativeIdFromUrl(creativeIdSourceUrl, String(name));
 
   return {
     name: String(name),
@@ -181,6 +182,7 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
     creativeId: derivedCreativeId,
     creativeFriendlyName: raw?.creative_friendly_name || name,
     clickUrl: clickUrl,
+    ctaText: raw?.cta_text || raw?.ctaText || '',
     ctaUrl: raw?.cta_url || gifUrl,
     carouselGif: raw?.carousel_gif || raw?.carousel_gifs?.[0] || gifUrl
   };
@@ -1713,12 +1715,19 @@ async function createOneAdGroup(page, group, idx) {
     throw new Error(`Could not fill CPM for ${group.name}`);
   }
 
-  const clickUrl = group.clickUrl || group.gifUrl;
-  const derivedCreativeId = deriveCreativeIdFromUrl(clickUrl, group.name);
+  const clickUrl = String(group.clickUrl || '').trim();
+  const creativeIdSourceUrl = clickUrl || group.gifUrl;
+  const derivedCreativeId = deriveCreativeIdFromUrl(creativeIdSourceUrl, group.name);
   await fillFirst(page, ['input[data-test="6318-Creative ID--input"]'], derivedCreativeId).catch(() => null);
   await fillFirst(page, ['input[data-test="6320-Creative Friendly Name--input"]'], group.creativeFriendlyName || group.name).catch(() => null);
   await fillFirst(page, ['input[data-test="6322-Carousel GIF(s)--input"]'], group.carouselGif || group.gifUrl).catch(() => null);
-  await fillFirst(page, ['input[data-test="6566-Click URL--input"]'], clickUrl).catch(() => null);
+  if (clickUrl) {
+    await fillFirst(page, ['input[data-test="6566-Click URL--input"]'], clickUrl).catch(() => null);
+  }
+  const ctaText = String(group.ctaText || '').trim();
+  if (ctaText) {
+    await fillFirst(page, ['input[data-test="6324-CTA Text--input"]'], ctaText).catch(() => null);
+  }
   await fillFirst(page, ['input[data-test="6326-CTA URL--input"]'], group.ctaUrl || group.gifUrl).catch(() => null);
   await dismissDatePickerPopover(page, adgroupNum);
 
