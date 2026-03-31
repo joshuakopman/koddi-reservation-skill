@@ -7,6 +7,9 @@ const DIAG_DIR = process.env.DIAG_DIR || 'artifacts';
 const CAMPAIGN_FILE = process.env.CAMPAIGN_FILE || '';
 const PLAYWRIGHT_CHANNEL = process.env.PLAYWRIGHT_CHANNEL || '';
 const BROWSER_EXECUTABLE_PATH = process.env.BROWSER_EXECUTABLE_PATH || '';
+const USE_CDP = process.env.USE_CDP === '1';
+const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://127.0.0.1:9222';
+const CHROME_PROFILE_DIRECTORY = process.env.CHROME_PROFILE_DIRECTORY || '';
 const CLEAR_SINGLETON_LOCKS = process.env.CLEAR_SINGLETON_LOCKS === '1';
 const ADGROUPS_URL = process.env.ADGROUPS_URL || 'https://k1-uat.koddi.app/#/clients/3500/reservations';
 const RESERVE_URL = process.env.RESERVE_URL || 'https://k1-uat.koddi.app/#/clients/3500/reservations/reserve';
@@ -27,6 +30,7 @@ const TARGETING_GROUP_STEP_DELAY_MS = Number(process.env.TARGETING_GROUP_STEP_DE
 const DEFAULT_COUNTRIES = ['United States'];
 const DEFAULT_AD_TYPES = ['API: GIF'];
 const DEFAULT_POSITIONS = ['Position 1'];
+const DEFAULT_AD_CONTEXTS = ['*'];
 
 const DEFAULT_AD_GROUPS = [
   {
@@ -60,6 +64,7 @@ let AD_GROUPS = DEFAULT_AD_GROUPS.map((g) => ({
   countries: Array.isArray(g.countries) && g.countries.length ? g.countries : DEFAULT_COUNTRIES,
   adTypes: Array.isArray(g.adTypes) && g.adTypes.length ? g.adTypes : DEFAULT_AD_TYPES,
   positions: Array.isArray(g.positions) && g.positions.length ? g.positions : DEFAULT_POSITIONS,
+  adContexts: Array.isArray(g.adContexts) && g.adContexts.length ? g.adContexts : DEFAULT_AD_CONTEXTS,
   reservedImpressions: RESERVED_IMPS_PER_GROUP
 }));
 
@@ -111,6 +116,7 @@ function normalizeGroup(raw, fallbackImps) {
     countries: asArray(raw?.countries ?? raw?.country),
     adTypes: asArray(raw?.ad_types ?? raw?.adTypes ?? raw?.ad_type),
     positions: asArray(raw?.positions ?? raw?.position),
+    adContexts: asArray(raw?.ad_contexts ?? raw?.adContexts ?? raw?.ad_context),
     reservedImpressions: toNumber(raw?.reserved_impressions ?? raw?.reservedImpressions, fallbackImps),
     creativeId: raw?.creative_id || name,
     creativeFriendlyName: raw?.creative_friendly_name || name,
@@ -167,6 +173,19 @@ async function applyCampaignOverrides() {
 }
 
 async function launchBrowserContext() {
+  if (USE_CDP) {
+    try {
+      const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
+      const contexts = browser.contexts();
+      const context = contexts[0] || (await browser.newContext());
+      console.log(`Connected to existing Chrome via CDP at ${CDP_ENDPOINT}`);
+      return { context, browser, viaCdp: true };
+    } catch (error) {
+      const msg = String(error?.message || error).split('\n')[0];
+      console.warn(`CDP connect failed at ${CDP_ENDPOINT}; falling back to Playwright-launched browser. ${msg}`);
+    }
+  }
+
   const staleLockNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'RunningChromeVersion'];
   const clearLocks = async (profileDir) => {
     for (const name of staleLockNames) {
@@ -179,7 +198,12 @@ async function launchBrowserContext() {
     headless: false,
     viewport: { width: 1600, height: 1000 },
     slowMo: SLOW_MO,
-    args: ['--disable-crash-reporter', '--disable-crashpad', '--disable-breakpad']
+    args: [
+      '--disable-crash-reporter',
+      '--disable-crashpad',
+      '--disable-breakpad',
+      ...(CHROME_PROFILE_DIRECTORY ? [`--profile-directory=${CHROME_PROFILE_DIRECTORY}`] : [])
+    ]
   };
 
   const attempts = [];
@@ -212,7 +236,7 @@ async function launchBrowserContext() {
       try {
         const ctx = await chromium.launchPersistentContext(profileDir, { ...base, ...attempt.opts });
         console.log(`Launched browser using profile: ${profileDir} (${attempt.label})`);
-        return ctx;
+        return { context: ctx, browser: null, viaCdp: false };
       } catch (error) {
         lastError = error;
         const msg = String(error?.message || error).split('\n')[0];
@@ -901,6 +925,63 @@ async function setExactAttributeSelections(page, panel, values = [], opts = {}) 
   };
 }
 
+async function setAllAttributeSelections(page, panel) {
+  const searchInput = panel.locator('input[placeholder*="Search"]').first();
+  const hasSearch = await searchInput.isVisible().catch(() => false);
+  if (hasSearch) {
+    await searchInput.fill('').catch(() => {});
+  }
+
+  let stablePasses = 0;
+  let previousCheckedCount = -1;
+  for (let pass = 0; pass < 18 && stablePasses < 3; pass += 1) {
+    const result = await panel.evaluate((root) => {
+      const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
+      let changed = 0;
+      let checkedCount = 0;
+      for (const container of containers) {
+        const button = container.querySelector('button[role="checkbox"]');
+        if (!button) continue;
+        let isChecked = button.getAttribute('aria-checked') === 'true';
+        if (!isChecked) {
+          button.click();
+          isChecked = button.getAttribute('aria-checked') === 'true';
+          if (isChecked) changed += 1;
+        }
+        if (isChecked) checkedCount += 1;
+      }
+
+      const scrollable = Array.from(root.querySelectorAll('*')).find(
+        (el) => el.scrollHeight > el.clientHeight + 8
+      );
+      if (scrollable) {
+        const nearBottom = scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 6;
+        scrollable.scrollTop = nearBottom
+          ? 0
+          : (scrollable.scrollTop + Math.max(220, Math.floor(scrollable.clientHeight * 0.8)));
+      }
+
+      return { changed, checkedCount };
+    }).catch(() => ({ changed: 0, checkedCount: 0 }));
+
+    if (result.checkedCount === previousCheckedCount && result.changed === 0) {
+      stablePasses += 1;
+    } else {
+      stablePasses = 0;
+    }
+    previousCheckedCount = result.checkedCount;
+    await page.waitForTimeout(110);
+  }
+
+  const finalState = await panel.evaluate((root) => {
+    const checkboxes = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"] button[role="checkbox"]'));
+    const checkedCount = checkboxes.filter((cb) => cb.getAttribute('aria-checked') === 'true').length;
+    return { checkedCount, total: checkboxes.length };
+  }).catch(() => ({ checkedCount: 0, total: 0 }));
+
+  return { ok: finalState.checkedCount > 0, checkedCount: finalState.checkedCount, total: finalState.total };
+}
+
 async function selectOnlyFirstAttributeOption(page, panel) {
   for (let pass = 0; pass < 3; pass += 1) {
     const checked = panel.locator('[data-testid="attribute-select--checkbox"] button[role="checkbox"][aria-checked="true"]');
@@ -1096,7 +1177,15 @@ async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, reques
 
 async function setAdditionalDimensionValues(page, dimensionName, values = [], opts = {}) {
   const cleanValues = dedupeStrings(values);
-  if (cleanValues.length === 0) return true;
+  const normalizedDimName = normalizeUiText(dimensionName);
+  const selectAllRequested = normalizedDimName === 'ad context' && (
+    cleanValues.length === 0
+    || cleanValues.some((v) => {
+      const normalized = normalizeUiText(v);
+      return normalized === '*' || normalized === 'all';
+    })
+  );
+  if (cleanValues.length === 0 && !selectAllRequested) return true;
 
   const requestedGroupIndex = Number.isInteger(opts.targetGroupIndex) ? opts.targetGroupIndex : null;
   const adgroupNum = Number.isInteger(opts.adgroupNum) ? opts.adgroupNum : null;
@@ -1116,7 +1205,8 @@ async function setAdditionalDimensionValues(page, dimensionName, values = [], op
   const dimensionAliases = {
     'Ad type': ['Ad type', 'ad type', 'ad_type'],
     Country: ['Country', 'country'],
-    Position: ['Position', 'position']
+    Position: ['Position', 'position'],
+    'Ad Context': ['Ad Context', 'ad context', 'ad_context']
   };
   const labels = dimensionAliases[dimensionName] || [dimensionName];
 
@@ -1178,7 +1268,6 @@ async function setAdditionalDimensionValues(page, dimensionName, values = [], op
     return false;
   }
 
-  const normalizedDimName = normalizeUiText(dimensionName);
   const attributeLoadDelayMs = normalizedDimName === 'country'
     ? ATTRIBUTE_LOAD_WAIT_MS
     : 260;
@@ -1217,10 +1306,12 @@ async function setAdditionalDimensionValues(page, dimensionName, values = [], op
     }
   }
 
-  let selection = await setExactAttributeSelections(page, attributePanel, cleanValues, {
-    maxAttemptsPerValue: normalizedDimName === 'country' ? 10 : 6,
-    retryDelayMs: normalizedDimName === 'country' ? 150 : 100
-  });
+  let selection = selectAllRequested
+    ? await setAllAttributeSelections(page, attributePanel)
+    : await setExactAttributeSelections(page, attributePanel, cleanValues, {
+      maxAttemptsPerValue: normalizedDimName === 'country' ? 10 : 6,
+      retryDelayMs: normalizedDimName === 'country' ? 150 : 100
+    });
 
   if (!selection.ok && normalizedDimName === 'ad type') {
     const fallbackPicked = await selectOnlyFirstAttributeOption(page, attributePanel);
@@ -1237,10 +1328,13 @@ async function setAdditionalDimensionValues(page, dimensionName, values = [], op
   const triggerMatch = triggerText.match(/\+(\d+)\s+selected/i);
   const triggerSelectedCount = triggerMatch ? Number(triggerMatch[1]) : null;
 
-  if (selection.unmatched.length > 0) {
+  if (Array.isArray(selection.unmatched) && selection.unmatched.length > 0) {
     console.warn(`Unmatched ${dimensionName} values: ${selection.unmatched.join(', ')}`);
   }
 
+  if (selectAllRequested) {
+    return selection.ok && (triggerSelectedCount == null || triggerSelectedCount >= 1);
+  }
   return selection.ok && (triggerSelectedCount == null || triggerSelectedCount === cleanValues.length);
 }
 
@@ -1512,6 +1606,7 @@ async function createOneAdGroup(page, group, idx) {
   const countries = Array.isArray(group.countries) && group.countries.length ? group.countries : DEFAULT_COUNTRIES;
   const positions = Array.isArray(group.positions) && group.positions.length ? group.positions : DEFAULT_POSITIONS;
   const adTypesRaw = Array.isArray(group.adTypes) && group.adTypes.length ? group.adTypes : DEFAULT_AD_TYPES;
+  const adContexts = Array.isArray(group.adContexts) && group.adContexts.length ? group.adContexts : DEFAULT_AD_CONTEXTS;
   let adTypes = adTypesRaw;
   const norm = (v) => String(v || '').toLowerCase().trim();
   const countrySet = new Set(countries.map(norm));
@@ -1575,6 +1670,24 @@ async function createOneAdGroup(page, group, idx) {
     await captureDiagnostics(page, `${label}-ad-type-targeting-failed`);
     throw new Error(`Could not set ad type targeting for ${group.name}`);
   }
+  if (TARGETING_GROUP_STEP_DELAY_MS > 0) {
+    await page.waitForTimeout(TARGETING_GROUP_STEP_DELAY_MS);
+  }
+
+  const adContextGroupAdded = await addNewTargetingGroup(page);
+  if (!adContextGroupAdded?.ok) {
+    await captureDiagnostics(page, `${label}-ad-context-group-add-failed`);
+    throw new Error(`Could not add ad context targeting group for ${group.name}`);
+  }
+  const adContextOk = await setAdditionalDimensionValues(page, 'Ad Context', adContexts, {
+    addDimensionWithinGroup: false,
+    targetGroupIndex: adContextGroupAdded.index,
+    adgroupNum
+  });
+  if (!adContextOk) {
+    await captureDiagnostics(page, `${label}-ad-context-targeting-failed`);
+    throw new Error(`Could not set ad context targeting for ${group.name}`);
+  }
   const orphanedGroupsRemoved = await removeOrphanedEmptyTargetingGroups(page, 3);
   if (orphanedGroupsRemoved > 0) {
     console.warn(`Removed ${orphanedGroupsRemoved} orphaned empty targeting group(s) before finishing ${label}.`);
@@ -1615,7 +1728,8 @@ async function createOneAdGroup(page, group, idx) {
 async function main() {
   await applyCampaignOverrides();
 
-  const context = await launchBrowserContext();
+  const launched = await launchBrowserContext();
+  const context = launched.context;
   context.setDefaultTimeout(2500);
   context.setDefaultNavigationTimeout(7000);
 
@@ -1660,7 +1774,11 @@ async function main() {
       console.error('Submit failed and diagnostics were captured. Browser left open for inspection; script exiting without closing browser.');
     } else {
       console.error('Submit failed; closing browser/context automatically.');
-      await context.close();
+      if (launched.viaCdp) {
+        await launched.browser?.close().catch(() => null);
+      } else {
+        await context.close();
+      }
     }
     return;
   }
@@ -1672,7 +1790,11 @@ async function main() {
     console.log('Completed ad-group creation and verified Submit success. Browser left open for manual verification; script exiting without closing browser.');
   } else {
     console.log('Completed ad-group creation and verified Submit success. Closing browser/context automatically.');
-    await context.close();
+    if (launched.viaCdp) {
+      await launched.browser?.close().catch(() => null);
+    } else {
+      await context.close();
+    }
   }
 }
 

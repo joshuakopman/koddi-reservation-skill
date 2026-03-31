@@ -5,7 +5,7 @@ Automates creation of a Koddi reservation campaign in the UI:
 - Creates a new reservation
 - Creates multiple ad groups
 - Populates creative/click/CTA fields
-- Applies targeting with AND groups: search_query + country + position + ad type (each in its own targeting group)
+- Applies targeting with AND groups: search_query + country + position + ad type + ad context (each in its own targeting group)
 - Submits and verifies success
 
 ## Repository Layout
@@ -44,6 +44,9 @@ cp skills/koddi-reservation-campaign-builder/references/campaign.template.json /
 
 The browser stays open at the end so you can manually verify results.
 
+By default, this automation uses its own Playwright profile and does not require copying your Chrome profile.
+Any profile/CDP flags are optional troubleshooting tools for local login edge cases.
+
 ## Input Schema
 
 Top-level keys:
@@ -72,6 +75,7 @@ Each `ad_groups[]` item:
 - `carousel_gif` (string, optional)
 - `carousel_gifs` (string array, optional; first value used)
 - `ad_types` (string array, optional; defaults to `["API: GIF"]`; applied in its own AND targeting group)
+- `ad_contexts` (string array, optional; defaults to `["*"]` which selects all available Ad Context checkboxes; applied in its own AND targeting group)
 - `countries` (string array, optional; defaults to `["United States"]`; applied in its own AND targeting group)
 - `positions` (string array, optional; defaults to `["Position 1"]`; applied in its own AND targeting group)
 - `keywords` (array, optional)
@@ -107,6 +111,7 @@ Impression precedence:
         "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX"
       ],
       "ad_types": ["API: GIF"],
+      "ad_contexts": ["*"],
       "countries": ["United States"],
       "positions": ["Position 1"],
       "keywords": ["city", "drama", "night"]
@@ -141,6 +146,7 @@ Requirements:
   - countries = ["United States"]
   - positions = ["Position 1"]
   - ad_types = ["API: GIF"]
+  - ad_contexts = ["*"] (means select all Ad Context checkboxes)
   - keywords = [] (leave empty so automation randomizes keywords in Koddi UI)
 
 Ad groups (5):
