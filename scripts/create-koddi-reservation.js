@@ -136,6 +136,10 @@ async function applyCampaignOverrides() {
     }));
     console.log(`Using total_impressions=${TOTAL_IMPRESSIONS}; split across ${AD_GROUPS.length} ad groups as: ${splits.join(', ')}`);
   }
+
+  if (!String(ADVERTISER_NAME || '').trim()) {
+    throw new Error('advertiser_name is required. Set reservation.advertiser_name in CAMPAIGN_FILE (exact UI label).');
+  }
 }
 
 async function launchBrowserContext() {

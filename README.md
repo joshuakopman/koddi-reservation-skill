@@ -56,7 +56,7 @@ Top-level keys:
 - `name` (string, required)
 - `start_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `end_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
-- `advertiser_name` (string, recommended)
+- `advertiser_name` (string, required; must exactly match the Koddi UI option label)
 - `total_impressions` (number, recommended/primary; auto-split evenly across all ad groups)
 - `reserved_impressions_per_group` (number, recommended fallback)
 

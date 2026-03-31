@@ -3,7 +3,7 @@
     "name": "AV Search Rotational",
     "start_date": "2026-04-01",
     "end_date": "2026-06-30",
-    "advertiser_name": "Demo Advertiser",
+    "advertiser_name": "REQUIRED_EXACT_UI_ADVERTISER_LABEL",
     "total_impressions": 757576
   },
   "ad_groups": [
