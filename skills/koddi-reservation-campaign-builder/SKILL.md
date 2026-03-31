@@ -25,7 +25,7 @@ Use this shape:
 - `reservation.name`
 - `reservation.start_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.end_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
-- `reservation.advertiser_name` (required; exact advertiser option label shown in UI)
+- `reservation.advertiser_name` (optional; if omitted, script selects the first advertiser option in UI)
 - `reservation.total_impressions` (recommended/primary; auto-split evenly across all ad groups)
 - `reservation.reserved_impressions_per_group` (default fallback for each ad group)
 - `ad_groups[]` with at minimum:
@@ -59,7 +59,7 @@ The automation:
 - Selects `Targeted Reservation` and `Multiple Ad Group Test Flow`
 - Selects advertiser from `Select an advertiser`
 - Fills reservation name/dates
-- Creates all ad groups with impressions, asset fields, and targeting dimensions (search_query, ad type, country, position)
+- Creates targeting as AND groups: search_query in the first group, then country, position, and ad type each in its own + Add new group
 - Clicks final `Submit`
 - Verifies submit success (success modal/navigation/toast checks)
 - Captures diagnostics under `artifacts/` on failures

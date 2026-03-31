@@ -5,7 +5,7 @@ Automates creation of a Koddi reservation campaign in the UI:
 - Creates a new reservation
 - Creates multiple ad groups
 - Populates creative/click/CTA fields
-- Applies targeting for keywords, ad type, country, and position
+- Applies targeting with AND groups: search_query + country + position + ad type (each in its own targeting group)
 - Submits and verifies success
 
 ## Repository Layout
@@ -56,7 +56,7 @@ Top-level keys:
 - `name` (string, required)
 - `start_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `end_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
-- `advertiser_name` (string, required; must exactly match the Koddi UI option label)
+- `advertiser_name` (string, optional; if omitted, script selects the first advertiser option in UI)
 - `total_impressions` (number, recommended/primary; auto-split evenly across all ad groups)
 - `reserved_impressions_per_group` (number, recommended fallback)
 
@@ -71,9 +71,9 @@ Each `ad_groups[]` item:
 - `cta_url` (string, optional; defaults to `gif_url`)
 - `carousel_gif` (string, optional)
 - `carousel_gifs` (string array, optional; first value used)
-- `ad_types` (string array, optional; defaults to `["API: GIF"]`)
-- `countries` (string array, optional; defaults to `["United States"]`)
-- `positions` (string array, optional; defaults to `["Position 1"]`)
+- `ad_types` (string array, optional; defaults to `["API: GIF"]`; applied in its own AND targeting group)
+- `countries` (string array, optional; defaults to `["United States"]`; applied in its own AND targeting group)
+- `positions` (string array, optional; defaults to `["Position 1"]`; applied in its own AND targeting group)
 - `keywords` (array, optional)
   - If provided: script attempts to select those exact keywords in Koddi UI.
   - If omitted or empty: script randomly selects keywords in UI for test coverage.

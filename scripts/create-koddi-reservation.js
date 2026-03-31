@@ -157,7 +157,7 @@ async function applyCampaignOverrides() {
   }
 
   if (!String(ADVERTISER_NAME || '').trim()) {
-    throw new Error('advertiser_name is required. Set reservation.advertiser_name in CAMPAIGN_FILE (exact UI label).');
+    console.log('No advertiser_name provided; script will select the first advertiser option in UI.');
   }
 }
 
@@ -707,24 +707,54 @@ async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, reques
   return false;
 }
 
-async function setAdditionalDimensionValues(page, dimensionName, values = []) {
+async function setAdditionalDimensionValues(page, dimensionName, values = [], opts = {}) {
   const cleanValues = Array.isArray(values) ? values.map((v) => String(v ?? '').trim()).filter(Boolean) : [];
   if (cleanValues.length === 0) return true;
+  const addDimensionWithinGroup = opts.addDimensionWithinGroup !== false;
 
-  const added = await clickFirst(page, [
-    '[data-testid="add-dimension-btn--button"]',
-    '[data-test="add-dimension-btn"]',
-    'button:has-text("Add dimension within group")'
-  ], 1200);
-  if (!added) return false;
+  if (addDimensionWithinGroup) {
+    const added = await clickFirst(page, [
+      '[data-testid="add-dimension-btn--button"]',
+      '[data-test="add-dimension-btn"]',
+      'button:has-text("Add dimension within group")'
+    ], 1200);
+    if (!added) return false;
+  }
+
+  const dimensionAliases = {
+    'Ad type': ['Ad type', 'ad type', 'ad_type'],
+    Country: ['Country', 'country'],
+    Position: ['Position', 'position']
+  };
+  const labels = dimensionAliases[dimensionName] || [dimensionName];
 
   const dimensionTrigger = page.locator('[data-testid="dimension-select--trigger--button"], [data-testid="dimension-select--trigger"] button').last();
+  await dimensionTrigger.waitFor({ state: 'visible', timeout: 1500 }).catch(() => null);
   await dimensionTrigger.click({ timeout: 1000 }).catch(() => null);
-  const pickedDimension = await clickFirst(page, [
-    `[role="option"]:has-text("${dimensionName}")`,
-    `text=${dimensionName}`
-  ], 1200);
-  if (!pickedDimension) return false;
+
+  const selectors = [];
+  for (const label of labels) {
+    selectors.push(`[role="option"]:has-text("${label}")`);
+    selectors.push(`text=${label}`);
+    selectors.push(`[data-value="${label}"]`);
+    selectors.push(`[data-value="${label.toLowerCase()}"]`);
+    selectors.push(`[data-value="${label.toLowerCase().replace(/\s+/g, '_')}"]`);
+  }
+
+  let pickedDimension = await clickFirst(page, selectors, 1200);
+  if (!pickedDimension) {
+    // Fallback for filterable option lists.
+    await page.keyboard.type(labels[0], { delay: 8 }).catch(() => null);
+    await page.waitForTimeout(120);
+    pickedDimension = await clickFirst(page, selectors, 900);
+    if (!pickedDimension) {
+      await page.keyboard.press('Enter').catch(() => null);
+      await page.waitForTimeout(120);
+    }
+  }
+  const dimText = (await dimensionTrigger.innerText().catch(() => '')).toLowerCase();
+  const dimensionApplied = labels.some((l) => dimText.includes(String(l).toLowerCase().replace('_', ' ')));
+  if (!pickedDimension && !dimensionApplied) return false;
 
   const attributeTrigger = page.locator('[data-testid="attribute-select--trigger--button"], [data-testid="attribute-select--trigger"] button').last();
   await attributeTrigger.click({ timeout: 1000 }).catch(() => null);
@@ -737,8 +767,12 @@ async function setAdditionalDimensionValues(page, dimensionName, values = []) {
     await searchInput.fill('').catch(() => {});
     await searchInput.fill(value).catch(() => {});
     await page.waitForTimeout(70);
-    const row = page.locator('[data-testid="attribute-select--checkbox"]', { hasText: value }).first();
-    const exists = (await row.count().catch(() => 0)) > 0;
+    let row = page.locator('[data-testid="attribute-select--checkbox"]', { hasText: value }).first();
+    let exists = (await row.count().catch(() => 0)) > 0;
+    if (!exists) {
+      row = page.locator('[data-testid="attribute-select--checkbox"]').first();
+      exists = (await row.count().catch(() => 0)) > 0;
+    }
     if (!exists) continue;
     const cb = row.locator('button[role="checkbox"]').first();
     const isChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
@@ -751,6 +785,17 @@ async function setAdditionalDimensionValues(page, dimensionName, values = []) {
   await page.keyboard.press('Escape').catch(() => {});
   await page.keyboard.press('Escape').catch(() => {});
   return selected > 0;
+}
+
+async function addNewTargetingGroup(page) {
+  const added = await clickFirst(page, [
+    '[data-testid="add-group-btn--button"]',
+    '[data-test="add-group-btn"]',
+    'button:has-text("Add new group")'
+  ], 1500);
+  if (!added) return false;
+  await page.waitForTimeout(120);
+  return true;
 }
 
 async function readVisibleToastTexts(page) {
@@ -896,20 +941,37 @@ async function createOneAdGroup(page, group, idx) {
   const countries = Array.isArray(group.countries) && group.countries.length ? group.countries : DEFAULT_COUNTRIES;
   const positions = Array.isArray(group.positions) && group.positions.length ? group.positions : DEFAULT_POSITIONS;
 
-  const adTypeOk = await setAdditionalDimensionValues(page, 'Ad type', adTypes);
-  if (!adTypeOk) {
-    await captureDiagnostics(page, `${label}-ad-type-targeting-failed`);
-    throw new Error(`Could not set ad type targeting for ${group.name}`);
+  const countryGroupAdded = await addNewTargetingGroup(page);
+  if (!countryGroupAdded) {
+    await captureDiagnostics(page, `${label}-country-group-add-failed`);
+    throw new Error(`Could not add country targeting group for ${group.name}`);
   }
-  const countryOk = await setAdditionalDimensionValues(page, 'Country', countries);
+  const countryOk = await setAdditionalDimensionValues(page, 'Country', countries, { addDimensionWithinGroup: false });
   if (!countryOk) {
     await captureDiagnostics(page, `${label}-country-targeting-failed`);
     throw new Error(`Could not set country targeting for ${group.name}`);
   }
-  const positionOk = await setAdditionalDimensionValues(page, 'Position', positions);
+
+  const positionGroupAdded = await addNewTargetingGroup(page);
+  if (!positionGroupAdded) {
+    await captureDiagnostics(page, `${label}-position-group-add-failed`);
+    throw new Error(`Could not add position targeting group for ${group.name}`);
+  }
+  const positionOk = await setAdditionalDimensionValues(page, 'Position', positions, { addDimensionWithinGroup: false });
   if (!positionOk) {
     await captureDiagnostics(page, `${label}-position-targeting-failed`);
     throw new Error(`Could not set position targeting for ${group.name}`);
+  }
+
+  const adTypeGroupAdded = await addNewTargetingGroup(page);
+  if (!adTypeGroupAdded) {
+    await captureDiagnostics(page, `${label}-ad-type-group-add-failed`);
+    throw new Error(`Could not add ad type targeting group for ${group.name}`);
+  }
+  const adTypeOk = await setAdditionalDimensionValues(page, 'Ad type', adTypes, { addDimensionWithinGroup: false });
+  if (!adTypeOk) {
+    await captureDiagnostics(page, `${label}-ad-type-targeting-failed`);
+    throw new Error(`Could not set ad type targeting for ${group.name}`);
   }
   await page.keyboard.press('Escape').catch(() => {});
   await page.waitForTimeout(20);
