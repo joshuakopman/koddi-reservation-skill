@@ -4,6 +4,7 @@
     "start_date": "2026-04-01",
     "end_date": "2026-06-30",
     "advertiser_name": "Demo Advertiser",
+    "total_impressions": 757576,
     "reserved_impressions_per_group": 757576
   },
   "ad_groups": [

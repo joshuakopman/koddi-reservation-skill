@@ -26,6 +26,7 @@ Use this shape:
 - `reservation.start_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.end_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.advertiser_name` (exact advertiser option label shown in UI)
+- `reservation.total_impressions` (optional; auto-split evenly across all ad groups)
 - `reservation.reserved_impressions_per_group` (default fallback for each ad group)
 - `ad_groups[]` with at minimum:
   - `name`
@@ -40,6 +41,12 @@ Optional ad group fields:
 - `cta_url`
 - `carousel_gif` or `carousel_gifs[0]`
 - `keywords` (optional; when provided, script attempts exact keyword selection in UI; otherwise random keywords are selected)
+
+Impression precedence:
+
+- `reservation.total_impressions` (if present, split evenly across all groups)
+- `ad_groups[].reserved_impressions`
+- `reservation.reserved_impressions_per_group`
 
 ## Behavior
 

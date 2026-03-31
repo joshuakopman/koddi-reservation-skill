@@ -57,6 +57,7 @@ Top-level keys:
 - `start_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `end_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `advertiser_name` (string, recommended)
+- `total_impressions` (number, optional; if set, auto-split evenly across all ad groups)
 - `reserved_impressions_per_group` (number, recommended fallback)
 
 Each `ad_groups[]` item:
@@ -74,6 +75,12 @@ Each `ad_groups[]` item:
   - If provided: script attempts to select those exact keywords in Koddi UI.
   - If omitted or empty: script randomly selects keywords in UI for test coverage.
 
+Impression precedence:
+
+- If `reservation.total_impressions` is set, the script splits it across all ad groups (remainder distributed from the first group onward).
+- Otherwise it uses each ad group's `reserved_impressions` if present.
+- Otherwise it falls back to `reservation.reserved_impressions_per_group`.
+
 ## Full Example
 
 ```json
@@ -83,6 +90,7 @@ Each `ad_groups[]` item:
     "start_date": "2026-04-01",
     "end_date": "2026-06-30",
     "advertiser_name": "Demo Advertiser",
+    "total_impressions": 4545455,
     "reserved_impressions_per_group": 757576
   },
   "ad_groups": [
@@ -114,7 +122,7 @@ Example brief:
 ```text
 Create Koddi reservation "josh test 12" from 04/01/2026 to 06/30/2026.
 Use advertiser "Demo Advertiser".
-Create 5 ad groups with 757,576 reserved impressions each.
+Use a total reservation goal of 4,545,455 impressions and split evenly across 5 ad groups.
 For each ad group, set creative id/friendly name to ad group name, and set click/cta/carousel URL to the GIF URL.
 Ad groups:
 1) one of those things - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX

@@ -15,6 +15,7 @@ let RESERVATION_NAME = process.env.RESERVATION_NAME || 'josh test';
 let START_DATE = process.env.START_DATE || '04/01/2026';
 let END_DATE = process.env.END_DATE || '06/30/2026';
 let ADVERTISER_NAME = process.env.ADVERTISER_NAME || '';
+let TOTAL_IMPRESSIONS = Number(process.env.TOTAL_IMPRESSIONS || 0);
 const KEEP_BROWSER_OPEN = process.env.KEEP_BROWSER_OPEN !== '0';
 const SLOW_MO = Number(process.env.SLOW_MO || 0);
 const DEBUG_KEYWORD_FAILURES = process.env.DEBUG_KEYWORD_FAILURES === '1';
@@ -51,6 +52,20 @@ let AD_GROUPS = DEFAULT_AD_GROUPS.map((g) => ({ ...g, reservedImpressions: RESER
 function toNumber(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function toPositiveInt(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.floor(n);
+}
+
+function distributeImpressionsEvenly(totalImpressions, groupCount) {
+  if (!Number.isFinite(totalImpressions) || totalImpressions <= 0 || groupCount <= 0) return [];
+  const total = Math.floor(totalImpressions);
+  const base = Math.floor(total / groupCount);
+  const remainder = total % groupCount;
+  return Array.from({ length: groupCount }, (_, idx) => base + (idx < remainder ? 1 : 0));
 }
 
 function normalizeDate(inputDate, fallback) {
@@ -96,6 +111,10 @@ async function applyCampaignOverrides() {
     reservation.reserved_impressions_per_group || parsed.reserved_impressions_per_group,
     RESERVED_IMPS_PER_GROUP
   );
+  TOTAL_IMPRESSIONS = toPositiveInt(
+    reservation.total_impressions || reservation.total_reserved_impressions || parsed.total_impressions || parsed.total_reserved_impressions || TOTAL_IMPRESSIONS,
+    TOTAL_IMPRESSIONS
+  );
 
   const rawGroups = parsed.ad_groups || parsed.adGroups || reservation.ad_groups || [];
   if (Array.isArray(rawGroups) && rawGroups.length > 0) {
@@ -104,6 +123,18 @@ async function applyCampaignOverrides() {
       throw new Error(`CAMPAIGN_FILE has ad_groups but none had required fields "name" and gif URL (${CAMPAIGN_FILE})`);
     }
     AD_GROUPS = normalized;
+  }
+
+  if (TOTAL_IMPRESSIONS > 0 && AD_GROUPS.length > 0) {
+    const splits = distributeImpressionsEvenly(TOTAL_IMPRESSIONS, AD_GROUPS.length);
+    if (splits.some((n) => n <= 0)) {
+      throw new Error(`total_impressions (${TOTAL_IMPRESSIONS}) is too small for ${AD_GROUPS.length} ad groups; each group must receive at least 1 impression.`);
+    }
+    AD_GROUPS = AD_GROUPS.map((g, idx) => ({
+      ...g,
+      reservedImpressions: splits[idx]
+    }));
+    console.log(`Using total_impressions=${TOTAL_IMPRESSIONS}; split across ${AD_GROUPS.length} ad groups as: ${splits.join(', ')}`);
   }
 }
 
