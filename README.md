@@ -68,7 +68,7 @@ Each `ad_groups[]` item:
 - `name` (string, required)
 - `gif_url` (string, required if click/cta/carousel not provided)
 - `reserved_impressions` (number, optional; falls back to reservation default)
-- `creative_id` (string, optional; defaults to name)
+- `creative_id` (string, optional input only; runtime always derives Creative ID from the `click_url` slug token)
 - `creative_friendly_name` (string, optional; defaults to name)
 - `click_url` (string, optional; defaults to `gif_url`)
 - `cta_url` (string, optional; defaults to `gif_url`)
@@ -103,7 +103,7 @@ Impression precedence:
     {
       "name": "one of those things",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
-      "creative_id": "one of those things",
+      "creative_id": "1iHDjCqdmDJOqZFYAX",
       "creative_friendly_name": "one of those things",
       "click_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
       "cta_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
@@ -138,7 +138,7 @@ Requirements:
 - Advertiser name: REQUIRED_EXACT_UI_ADVERTISER_LABEL
 - Total impressions: 4,545,455 (split evenly across all ad groups)
 - For every ad group:
-  - creative_id = ad group name
+  - creative_id is auto-derived from click_url slug token (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
   - creative_friendly_name = ad group name
   - click_url = gif_url
   - cta_url = gif_url

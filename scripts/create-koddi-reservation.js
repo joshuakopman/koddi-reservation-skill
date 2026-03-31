@@ -102,6 +102,29 @@ function normalizeDate(inputDate, fallback) {
   return fallback;
 }
 
+function deriveCreativeIdFromUrl(urlValue, fallback = '') {
+  const raw = String(urlValue || '').trim();
+  if (!raw) return String(fallback || '').trim();
+
+  let lastSegment = '';
+  try {
+    const parsed = new URL(raw);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    lastSegment = segments[segments.length - 1] || '';
+  } catch {
+    const withoutQuery = raw.split(/[?#]/)[0];
+    const segments = withoutQuery.split('/').filter(Boolean);
+    lastSegment = segments[segments.length - 1] || '';
+  }
+
+  lastSegment = decodeURIComponent(String(lastSegment || '')).trim();
+  if (!lastSegment) return String(fallback || '').trim();
+
+  const parts = lastSegment.split('-').filter(Boolean);
+  const token = parts.length > 0 ? parts[parts.length - 1] : lastSegment;
+  return String(token || fallback || '').trim();
+}
+
 function normalizeGroup(raw, fallbackImps) {
   const name = raw?.name || raw?.gif_name || raw?.creative_friendly_name || raw?.creative_id;
   const gifUrl = raw?.gifUrl || raw?.gif_url || raw?.click_url || raw?.cta_url || raw?.carousel_gif || raw?.carousel_gifs?.[0];
@@ -114,6 +137,9 @@ function normalizeGroup(raw, fallbackImps) {
     return one ? [one] : [];
   };
 
+  const clickUrl = raw?.click_url || gifUrl;
+  const derivedCreativeId = deriveCreativeIdFromUrl(clickUrl, String(name));
+
   return {
     name: String(name),
     gifUrl: String(gifUrl),
@@ -123,9 +149,9 @@ function normalizeGroup(raw, fallbackImps) {
     positions: asArray(raw?.positions ?? raw?.position),
     adContexts: asArray(raw?.ad_contexts ?? raw?.adContexts ?? raw?.ad_context),
     reservedImpressions: toNumber(raw?.reserved_impressions ?? raw?.reservedImpressions, fallbackImps),
-    creativeId: raw?.creative_id || name,
+    creativeId: derivedCreativeId,
     creativeFriendlyName: raw?.creative_friendly_name || name,
-    clickUrl: raw?.click_url || gifUrl,
+    clickUrl: clickUrl,
     ctaUrl: raw?.cta_url || gifUrl,
     carouselGif: raw?.carousel_gif || raw?.carousel_gifs?.[0] || gifUrl
   };
@@ -1586,10 +1612,12 @@ async function createOneAdGroup(page, group, idx) {
     throw new Error(`Could not fill reserved impressions for ${group.name}`);
   }
 
-  await fillFirst(page, ['input[data-test="6318-Creative ID--input"]'], group.creativeId || group.name).catch(() => null);
+  const clickUrl = group.clickUrl || group.gifUrl;
+  const derivedCreativeId = deriveCreativeIdFromUrl(clickUrl, group.name);
+  await fillFirst(page, ['input[data-test="6318-Creative ID--input"]'], derivedCreativeId).catch(() => null);
   await fillFirst(page, ['input[data-test="6320-Creative Friendly Name--input"]'], group.creativeFriendlyName || group.name).catch(() => null);
   await fillFirst(page, ['input[data-test="6322-Carousel GIF(s)--input"]'], group.carouselGif || group.gifUrl).catch(() => null);
-  await fillFirst(page, ['input[data-test="6566-Click URL--input"]'], group.clickUrl || group.gifUrl).catch(() => null);
+  await fillFirst(page, ['input[data-test="6566-Click URL--input"]'], clickUrl).catch(() => null);
   await fillFirst(page, ['input[data-test="6326-CTA URL--input"]'], group.ctaUrl || group.gifUrl).catch(() => null);
   await dismissDatePickerPopover(page, adgroupNum);
 
