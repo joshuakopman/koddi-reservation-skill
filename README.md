@@ -148,6 +148,8 @@ Runtime execution currently expects a JSON file path.
 
 Operationally, you can provide a plain-language campaign brief and generate JSON from it before running.
 
+Invoke the skill by starting your prompt with `$koddi-reservation-campaign-builder`.
+
 Copy/paste prompt examples non-technical users can run in Codex:
 
 ### Example Prompt 1: Mixed Campaign Types (Search + Trending + Banner) W/ Evenly Distributed Impression Goal
