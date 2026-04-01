@@ -199,7 +199,6 @@ Ad groups (5):
    campaign_type: search
    ad_types: ["API: GIF"]
 
-Output only raw JSON, no markdown.
 ```
 
 ### Example Prompt 2: Uneven Impression Split (Search Only)
@@ -245,7 +244,6 @@ Ad groups (4):
    campaign_type: search
    reserved_impressions: 100000
 
-Output only raw JSON, no markdown.
 ```
 
 ## Validate Before Running
