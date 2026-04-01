@@ -248,8 +248,6 @@ Ad groups (4):
 Output only raw JSON, no markdown.
 ```
 
-Then convert one of those briefs into the schema above and run the script. Include `keywords` per ad group only when you want deterministic selection; otherwise leave it empty/omitted and the script will choose random keywords.
-
 ## Validate Before Running
 
 ```bash
