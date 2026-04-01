@@ -108,7 +108,7 @@ CPM precedence:
 - `reservation.cpm_per_group` (or `reservation.cpm`)
 - default `10`
 
-## Full Example
+## Reservation Campaign Example JSON
 
 ```json
 {
