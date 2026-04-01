@@ -161,8 +161,7 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
   };
 
   const clickUrl = raw?.click_url ? String(raw.click_url).trim() : '';
-  const creativeIdSourceUrl = clickUrl || gifUrl;
-  const derivedCreativeId = deriveCreativeIdFromUrl(creativeIdSourceUrl, String(name));
+  const derivedCreativeId = deriveCreativeIdFromUrl(gifUrl, String(name));
 
   return {
     name: String(name),
@@ -1716,8 +1715,7 @@ async function createOneAdGroup(page, group, idx) {
   }
 
   const clickUrl = String(group.clickUrl || '').trim();
-  const creativeIdSourceUrl = clickUrl || group.gifUrl;
-  const derivedCreativeId = deriveCreativeIdFromUrl(creativeIdSourceUrl, group.name);
+  const derivedCreativeId = deriveCreativeIdFromUrl(group.gifUrl, group.name);
   await fillFirst(page, ['input[data-test="6318-Creative ID--input"]'], derivedCreativeId).catch(() => null);
   await fillFirst(page, ['input[data-test="6320-Creative Friendly Name--input"]'], group.creativeFriendlyName || group.name).catch(() => null);
   await fillFirst(page, ['input[data-test="6322-Carousel GIF(s)--input"]'], group.carouselGif || group.gifUrl).catch(() => null);

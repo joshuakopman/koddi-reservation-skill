@@ -71,7 +71,7 @@ Each `ad_groups[]` item:
 - `campaign_type` (string, optional per ad group; `search` default, or `trending`/`banner`)
 - `reserved_impressions` (number, optional; falls back to reservation default)
 - `cpm` (number, optional; falls back to reservation/default CPM)
-- `creative_id` (string, optional input only; runtime derives Creative ID from the last token in `click_url` path segment when provided, otherwise from `gif_url`)
+- `creative_id` (string, optional input only; runtime derives Creative ID from the last token in `gif_url` path segment)
 - `creative_friendly_name` (string, optional; defaults to name)
 - `click_url` (string, optional; if omitted, Click URL is left blank in UI)
 - `cta_text` (string, optional; if omitted, CTA Text is left blank in UI)
@@ -162,7 +162,7 @@ Requirements:
 - CPM per ad group: 10
 - For every ad group, set `campaign_type` as needed: defaults to `search`, or use `trending`/`banner`.
 - For every ad group:
-  - creative_id is auto-derived by parsing the ID at the end of `click_url` when provided, otherwise `gif_url` (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
+  - creative_id is auto-derived by parsing the ID at the end of `gif_url` (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
   - creative_friendly_name = ad group name
   - click_url is optional; include only when you want it set
   - cta_text is optional; include only when you want it set
