@@ -155,7 +155,7 @@ Copy/paste prompt examples non-technical users can run in Codex:
 ### Example Prompt 1: Mixed Campaign Types (Search + Trending + Banner) W/ Evenly Distributed Impression Goal
 
 ```text
-Please generate a valid campaign JSON file for the Koddi reservation automation based on the following requirements, then execute the creation skill based on that JSON, and leave the browser open at the end.
+Please generate a valid campaign JSON file for the Koddi reservation automation based on the following requirements, then execute the Koddi Reservation Builder skill based on that JSON, and leave the browser open at the end.
 
 Requirements:
 - Reservation name: josh test 12
@@ -204,7 +204,7 @@ Ad groups (5):
 ### Example Prompt 2: Uneven Impression Split (Search Only)
 
 ```text
-Please generate a valid campaign JSON file for the Koddi reservation automation based on the following requirements, then execute the creation skill based on that JSON, and leave the browser open at the end.
+Please generate a valid campaign JSON file for the Koddi reservation automation based on the following requirements, then execute the Koddi Reservation Builder skill based on that JSON, and leave the browser open at the end.
 
 Requirements:
 - Reservation name: testing uneven impression counts for lisa
