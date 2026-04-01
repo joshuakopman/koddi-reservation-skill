@@ -255,3 +255,85 @@ Ad groups (4):
    reserved_impressions: 100000
 
 ```
+
+### Example Prompt 3: Separate Even Splits by Campaign Type (Search + Trending)
+
+```text
+Please generate a valid campaign JSON file for the Koddi reservation automation based on the following requirements, then execute the Koddi Reservation Builder skill based on that JSON, and leave the browser open at the end.
+
+Requirements:
+- Reservation name: Old El Paso Search + Trending Rotational 2026-04-21 to 2026-05-05
+- Start date: 04/21/2026
+- End date: 05/05/2026
+- Advertiser name: optional in your JSON input. Koddi UI still requires an advertiser; if you omit it, the automation selects the first advertiser option in the dropdown.
+- Build only Search Rotational and Trending Rotational ad groups.
+- Do not include Trending Takeover or AV Sticker Takeover groups.
+- Do not set reservation.total_impressions.
+
+Search Rotational requirements:
+- campaign_type: search
+- Impression goal total: 2,272,727
+- Split evenly across the 7 Search groups (distribute remainder +1 to earliest groups)
+- CPM: 11
+
+Trending Rotational requirements:
+- campaign_type: trending
+- Impression goal total: 3,125,000
+- Split evenly across the 6 Trending groups (distribute remainder +1 to earliest groups)
+- CPM: 8
+
+For every ad group:
+- creative_id auto-derived from the ID at the end of gif_url
+- creative_friendly_name = ad group name
+- click_url = gif_url
+- cta_url = gif_url
+- carousel_gifs = [gif_url]
+- countries = ["United States"]
+- positions = ["Position 1"]
+- ad_types = ["API: GIF"]
+- ad_contexts = ["*"]
+- for search groups: keywords = []
+- for trending groups: omit keywords (automation forces "# giphytrending #")
+
+Ad groups (13):
+1) Yeehaw! - Search Rotational
+   campaign_type: search
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE
+2) Taco Tuesday! - Search Rotational
+   campaign_type: search
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-qR7pHUplTamahKVY2L
+3) On my way! - Search Rotational
+   campaign_type: search
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VRmlnwz0lyQo25TTwS
+4) Gimme that! - Search Rotational
+   campaign_type: search
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-dBP8vDQiz9xojpCPVD
+5) It's taco time - Search Rotational
+   campaign_type: search
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-25pbGxTTDIJlZiQ9Px
+6) Happy Cinco de Mayo! - Search Rotational
+   campaign_type: search
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-PLmRUJ5qJy9woVkSPz
+7) Feed me! - Search Rotational
+   campaign_type: search
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
+8) Yeehaw! - Trending Rotational
+   campaign_type: trending
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE
+9) Taco Tuesday! - Trending Rotational
+   campaign_type: trending
+   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-qR7pHUplTamahKVY2L
+10) On my way! - Trending Rotational
+    campaign_type: trending
+    gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VRmlnwz0lyQo25TTwS
+11) Gimme that! - Trending Rotational
+    campaign_type: trending
+    gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-dBP8vDQiz9xojpCPVD
+12) It's taco time - Trending Rotational
+    campaign_type: trending
+    gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-25pbGxTTDIJlZiQ9Px
+13) Feed me! - Trending Rotational
+    campaign_type: trending
+    gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
+
+```
