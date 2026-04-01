@@ -148,7 +148,9 @@ Runtime execution currently expects a JSON file path.
 
 But operationally, no: you can provide a plain-language campaign brief and generate JSON from it before running.
 
-Copy/paste prompt non-technical users can run in Codex:
+Copy/paste prompt examples non-technical users can run in Codex:
+
+### Example Prompt 1: Mixed Campaign Types (Search + Trending + Banner) W/ Evenly Distributed Impression Goal
 
 ```text
 Please generate a valid campaign JSON file for the Koddi reservation automation.
@@ -160,7 +162,6 @@ Requirements:
 - Advertiser name: optional in your JSON input. Koddi UI still requires an advertiser; if you omit it, the automation selects the first advertiser option in the dropdown.
 - Total impressions: 4,545,455 (split evenly across all ad groups)
 - CPM per ad group: 10
-- For every ad group, set `campaign_type` as needed: defaults to `search`, or use `trending`/`banner`.
 - For every ad group:
   - creative_id is auto-derived by parsing the ID at the end of `gif_url` (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
   - creative_friendly_name = ad group name
@@ -170,9 +171,9 @@ Requirements:
   - carousel_gifs = [gif_url]
   - countries = ["United States"]
   - positions = ["Position 1"]
+  - ad_contexts = ["*"] (means select all Ad Context checkboxes)
   - if campaign_type is search or trending: set ad_types = ["API: GIF"] (or a provided ad type override)
   - if campaign_type is banner: ad_types should be Banner (script forces this automatically)
-  - ad_contexts = ["*"] (means select all Ad Context checkboxes)
   - if campaign_type is search: keywords can be [] to randomize, or provided explicitly
   - if campaign_type is trending: keywords should be omitted (script forces ["# giphytrending #"])
   - if campaign_type is banner: do not include keywords (banner skips search_query targeting)
@@ -199,7 +200,53 @@ Ad groups (5):
 Output only raw JSON, no markdown.
 ```
 
-Then convert that brief into the schema above and run the script. Include `keywords` per ad group only when you want deterministic selection; otherwise leave it empty/omitted and the script will choose random keywords.
+### Example Prompt 2: Uneven Impression Split (Search Only)
+
+```text
+Please generate a valid campaign JSON file for the Koddi reservation automation.
+
+Requirements:
+- Reservation name: testing uneven impression counts for lisa
+- Start date: 04/01/2026
+- End date: 06/30/2026
+- Advertiser name: optional in your JSON input. Koddi UI still requires an advertiser; if you omit it, the automation selects the first advertiser option in the dropdown.
+- Do not set reservation.total_impressions.
+- CPM per ad group: 10
+- For every ad group:
+  - creative_id is auto-derived by parsing the ID at the end of `gif_url`
+  - creative_friendly_name = ad group name
+  - click_url is optional; include only if explicitly provided
+  - cta_text is optional; include only if explicitly provided
+  - cta_url is optional (if omitted, automation defaults to `gif_url`)
+  - carousel_gifs = [gif_url]
+  - countries = ["United States"]
+  - positions = ["Position 1"]
+  - ad_types = ["API: GIF"]
+  - ad_contexts = ["*"]
+  - keywords = [] (randomized in UI)
+
+Ad groups (4):
+1) one of those things
+   gif_url: https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
+   campaign_type: search
+   reserved_impressions: 500000
+2) who's in charge?
+   gif_url: https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
+   campaign_type: search
+   reserved_impressions: 300000
+3) sus
+   gif_url: https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c
+   campaign_type: search
+   reserved_impressions: 100000
+4) so proud
+   gif_url: https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M
+   campaign_type: search
+   reserved_impressions: 100000
+
+Output only raw JSON, no markdown.
+```
+
+Then convert one of those briefs into the schema above and run the script. Include `keywords` per ad group only when you want deterministic selection; otherwise leave it empty/omitted and the script will choose random keywords.
 
 ## Validate Before Running
 
