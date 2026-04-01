@@ -142,11 +142,11 @@ CPM precedence:
 }
 ```
 
-## Does It Have To Be JSON?
+## Creating JSON Via Prompts
 
 Runtime execution currently expects a JSON file path.
 
-But operationally, no: you can provide a plain-language campaign brief and generate JSON from it before running.
+Operationally, you can provide a plain-language campaign brief and generate JSON from it before running.
 
 Copy/paste prompt examples non-technical users can run in Codex:
 
