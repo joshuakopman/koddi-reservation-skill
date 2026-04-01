@@ -79,6 +79,7 @@ Each `ad_groups[]` item:
 - `name` (string, required)
 - `gif_url` (string, required if click/cta/carousel not provided)
 - `campaign_type` (string, optional per ad group; `search` default, or `trending`/`banner`)
+- `product_type` (string, optional; useful when mapping spreadsheet exports)
 - `reserved_impressions` (number, optional; falls back to reservation default)
 - `cpm` (number, optional; falls back to reservation/default CPM)
 - `creative_id` (string, optional input only; runtime derives Creative ID from the last token in `gif_url` path segment)
@@ -94,7 +95,7 @@ Each `ad_groups[]` item:
 - `countries` (string array, optional; defaults to `["United States"]`; applied in its own AND targeting group)
 - `positions` (string array, optional; defaults to `["Position 1"]`; applied in its own AND targeting group)
 - `keywords` (array, optional)
-  - For `search`: if provided, script attempts exact keyword selection; if omitted/empty, script randomizes keywords in UI.
+  - For `search`: if provided, script attempts exact keyword selection; if omitted/empty, script randomizes keywords in UI while excluding `# giphytrending #`.
   - For `trending`: script always uses exactly `["# giphytrending #"]`.
   - For `banner`: script skips `search_query` keyword targeting (keywords in JSON are ignored for banner).
 
@@ -115,6 +116,7 @@ Impression precedence:
 CPM precedence:
 
 - `ad_groups[].cpm` (if provided)
+- if no per-group CPM is provided and the ad group appears Added Value (`AV` prefix in `name`, `product_type`, or `ad_types`), CPM defaults to `0` for that group
 - `reservation.cpm_per_group` (or `reservation.cpm`)
 - default `10`
 

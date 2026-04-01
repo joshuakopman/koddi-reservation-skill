@@ -30,12 +30,14 @@ const CAPTURE_SUCCESS_DIAGNOSTICS = process.env.CAPTURE_SUCCESS_DIAGNOSTICS === 
 const SLOW_MO = Number(process.env.SLOW_MO || 0);
 const DEBUG_KEYWORD_FAILURES = process.env.DEBUG_KEYWORD_FAILURES === '1';
 const PROFILE_FALLBACK = process.env.PLAYWRIGHT_PROFILE_FALLBACK === '1';
+const ENABLE_CHROME_EXTENSIONS = process.env.ENABLE_CHROME_EXTENSIONS === '1';
 const TARGETING_SETTLE_MS = Number(process.env.TARGETING_SETTLE_MS || 350);
 const COUNTRY_PICK_DELAY_MS = Number(process.env.COUNTRY_PICK_DELAY_MS || 250);
 const ATTRIBUTE_LOAD_WAIT_MS = Number(process.env.ATTRIBUTE_LOAD_WAIT_MS || 450);
 const TARGETING_GROUP_STEP_DELAY_MS = Number(process.env.TARGETING_GROUP_STEP_DELAY_MS || 500);
 const DEFAULT_CAMPAIGN_TYPE = 'search';
 const DEFAULT_TRENDING_KEYWORDS = ['# giphytrending #'];
+const RESERVED_TRENDING_KEYWORD_TOKEN = 'giphytrending';
 const DEFAULT_COUNTRIES = ['United States'];
 const DEFAULT_AD_TYPES = ['API: GIF'];
 const DEFAULT_BANNER_AD_TYPES = ['Banner'];
@@ -107,6 +109,19 @@ function normalizeCampaignType(value, fallback = DEFAULT_CAMPAIGN_TYPE) {
   return fallback;
 }
 
+function isAddedValuePrefixed(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return /^av(?:[\s:_-]|$)/.test(normalized);
+}
+
+function isAddedValueGroup({ name = '', productType = '', adTypeValues = [] } = {}) {
+  if (isAddedValuePrefixed(name)) return true;
+  if (isAddedValuePrefixed(productType)) return true;
+  if (Array.isArray(adTypeValues) && adTypeValues.some((v) => isAddedValuePrefixed(v))) return true;
+  return false;
+}
+
 function distributeImpressionsEvenly(totalImpressions, groupCount) {
   if (!Number.isFinite(totalImpressions) || totalImpressions <= 0 || groupCount <= 0) return [];
   const total = Math.floor(totalImpressions);
@@ -162,6 +177,14 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
 
   const clickUrl = raw?.click_url ? String(raw.click_url).trim() : '';
   const derivedCreativeId = deriveCreativeIdFromUrl(gifUrl, String(name));
+  const adTypes = asArray(raw?.ad_types ?? raw?.adTypes ?? raw?.ad_type);
+  const productType = String(raw?.product_type ?? raw?.productType ?? raw?.product ?? raw?.ad_product ?? raw?.adProduct ?? '').trim();
+  const rawCpm = raw?.cpm ?? raw?.reservation_cpm ?? raw?.reservationCpm ?? raw?.cpm_per_group ?? raw?.cpmPerGroup;
+  const hasExplicitGroupCpm = rawCpm !== undefined && rawCpm !== null && String(rawCpm).trim() !== '';
+  const addedValueGroup = isAddedValueGroup({ name, productType, adTypeValues: adTypes });
+  const resolvedCpm = hasExplicitGroupCpm
+    ? toNonNegativeNumber(rawCpm, fallbackCpm)
+    : (addedValueGroup ? 0 : toNonNegativeNumber(rawCpm, fallbackCpm));
 
   return {
     name: String(name),
@@ -169,15 +192,14 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
     campaignType: normalizeCampaignType(raw?.campaign_type ?? raw?.campaignType, DEFAULT_CAMPAIGN_TYPE),
     keywords: Array.isArray(raw?.keywords) ? raw.keywords : [],
     countries: asArray(raw?.countries ?? raw?.country),
-    adTypes: asArray(raw?.ad_types ?? raw?.adTypes ?? raw?.ad_type),
+    adTypes,
     positions: asArray(raw?.positions ?? raw?.position),
     adContexts: asArray(raw?.ad_contexts ?? raw?.adContexts ?? raw?.ad_context),
     onoViewTypes: asArray(raw?.ono_view_types ?? raw?.onoViewTypes ?? raw?.ono_view_type ?? raw?.onoViewType),
     reservedImpressions: toNumber(raw?.reserved_impressions ?? raw?.reservedImpressions, fallbackImps),
-    cpm: toNonNegativeNumber(
-      raw?.cpm ?? raw?.reservation_cpm ?? raw?.reservationCpm ?? raw?.cpm_per_group ?? raw?.cpmPerGroup,
-      fallbackCpm
-    ),
+    cpm: resolvedCpm,
+    productType,
+    addedValueGroup,
     creativeId: derivedCreativeId,
     creativeFriendlyName: raw?.creative_friendly_name || name,
     clickUrl: clickUrl,
@@ -277,6 +299,9 @@ async function launchBrowserContext() {
     headless: false,
     viewport: { width: 1600, height: 1000 },
     slowMo: SLOW_MO,
+    ...(ENABLE_CHROME_EXTENSIONS
+      ? { ignoreDefaultArgs: ['--disable-extensions', '--disable-component-extensions-with-background-pages'] }
+      : {}),
     args: [
       '--disable-crash-reporter',
       '--disable-crashpad',
@@ -286,6 +311,9 @@ async function launchBrowserContext() {
   };
 
   const attempts = [];
+  if (ENABLE_CHROME_EXTENSIONS) {
+    console.log('Chrome extension mode enabled: Playwright default extension-disable args are removed.');
+  }
   if (BROWSER_EXECUTABLE_PATH) {
     attempts.push({ label: `executablePath=${BROWSER_EXECUTABLE_PATH}`, opts: { executablePath: BROWSER_EXECUTABLE_PATH } });
   }
@@ -769,6 +797,13 @@ function normalizeUiText(value) {
   return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+function isReservedTrendingKeywordValue(value) {
+  const normalized = normalizeUiText(value);
+  if (!normalized) return false;
+  if (normalized.includes(RESERVED_TRENDING_KEYWORD_TOKEN)) return true;
+  return DEFAULT_TRENDING_KEYWORDS.some((kw) => normalizeUiText(kw) === normalized);
+}
+
 function dedupeStrings(values) {
   if (!Array.isArray(values)) return [];
   const out = [];
@@ -1225,6 +1260,13 @@ async function setKeywords(page, targetCount = 20, requestedKeywords = [], opts 
     const order = shuffledIndices(Math.min(count, 40));
     for (const i of order) {
       const cb = checkboxes.nth(i);
+      const optionLabel = await cb
+        .locator('xpath=ancestor::*[@data-testid="attribute-select--checkbox"]/following-sibling::*[1]')
+        .innerText()
+        .catch(() => '');
+      if (isReservedTrendingKeywordValue(optionLabel)) {
+        continue;
+      }
       const isChecked = (await cb.getAttribute('aria-checked').catch(() => 'false')) === 'true';
       if (isChecked) continue;
       await cb.click({ force: true, timeout: 250 }).catch(() => {});
@@ -1703,6 +1745,9 @@ async function createOneAdGroup(page, group, idx) {
   }
 
   const cpmValue = toNonNegativeNumber(group.cpm, CPM_PER_GROUP);
+  if (group.addedValueGroup && cpmValue === 0) {
+    console.log(`Added Value (AV) group detected for ${group.name}; using CPM 0.`);
+  }
   const cpmSel = await fillNumericFirst(page, [
     `input[data-test="adgroup.${adgroupNum}.reservation_cpm-field--input"]`,
     `input[name="adgroup.${adgroupNum}.reservation_cpm"]`,
@@ -1741,7 +1786,7 @@ async function createOneAdGroup(page, group, idx) {
     if (Array.isArray(requestedKeywords) && requestedKeywords.length > 0) {
       console.log(`Using ${requestedKeywords.length} requested keyword(s) for ${group.name}.`);
     } else {
-      console.log(`No keywords provided for ${group.name}; selecting random keywords in UI.`);
+      console.log(`No keywords provided for ${group.name}; selecting random keywords in UI (excluding ${DEFAULT_TRENDING_KEYWORDS.join(', ')}).`);
     }
     const kwOk = await setKeywordsWithRetry(page, 20, 3, requestedKeywords || [], { targetGroupIndex: 0, adgroupNum });
     if (!kwOk) {

@@ -38,6 +38,7 @@ Optional ad group fields:
 - `reserved_impressions`
 - `cpm` (optional per-group CPM override)
 - `campaign_type` (optional per group; defaults to `search`, or set `trending`/`banner`)
+- `product_type` (optional; useful when mapping spreadsheet exports)
 - `creative_id`
 - `creative_friendly_name`
 - `click_url` (optional; if omitted, Click URL is left blank in UI)
@@ -48,11 +49,11 @@ Optional ad group fields:
 - `ono_view_types` (optional string array for banner targeting dimension `OnO View Type`)
 - `countries` (optional string array; defaults to `["United States"]`)
 - `positions` (optional string array; defaults to `["Position 1"]`)
-- `keywords` (optional; when provided, script attempts exact keyword selection in UI; otherwise random keywords are selected)
+- `keywords` (optional; when provided, script attempts exact keyword selection in UI; otherwise random keywords are selected, excluding `# giphytrending #`)
 
 Campaign type behavior:
 
-- `search` (default): keyword targeting behaves normally.
+- `search` (default): keyword targeting behaves normally, and random keyword fallback excludes `# giphytrending #`.
 - `trending`: keywords are forced to exactly `# giphytrending #`.
 - `banner`: skips `search_query` (keywords ignored), forces ad type `Banner`, and adds `OnO View Type` targeting.
 - Reservation can contain a mix of ad group types by setting `ad_groups[].campaign_type`.
@@ -66,6 +67,7 @@ Impression precedence:
 CPM precedence:
 
 - `ad_groups[].cpm`
+- if no per-group CPM is provided and the ad group appears Added Value (`AV` prefix in `name`, `product_type`, or `ad_types`), CPM defaults to `0` for that group
 - `reservation.cpm_per_group` (or `reservation.cpm`)
 - default `10`
 
