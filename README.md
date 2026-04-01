@@ -50,6 +50,8 @@ cp skills/koddi-reservation-campaign-builder/references/campaign.template.json /
 ./skills/koddi-reservation-campaign-builder/scripts/run-koddi-campaign.sh /tmp/my-campaign.json
 ```
 
+On first run (or when not already authenticated), Chrome will open and you must log in to Koddi manually. The automation will continue after login.
+
 The browser stays open at the end so you can manually verify results.
 
 By default, this automation uses its own Playwright profile and does not require copying your Chrome profile.
