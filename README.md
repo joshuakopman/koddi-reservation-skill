@@ -150,7 +150,7 @@ CPM precedence:
 }
 ```
 
-## Creating JSON Via Prompts
+## Instructions for AdOps (Creating JSON via Prompts)
 
 Runtime execution currently expects a JSON file path.
 
@@ -252,16 +252,4 @@ Ad groups (4):
    campaign_type: search
    reserved_impressions: 100000
 
-```
-
-## Validate Before Running
-
-```bash
-node -e "const fs=require('fs'); JSON.parse(fs.readFileSync('/tmp/my-campaign.json','utf8')); console.log('valid json')"
-```
-
-## Direct NPM Invocation
-
-```bash
-CAMPAIGN_FILE="/tmp/my-campaign.json" npm run create:koddi-reservation
 ```
