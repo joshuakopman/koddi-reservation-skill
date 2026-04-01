@@ -30,13 +30,21 @@ Automates creation of a Koddi reservation campaign in the UI:
 npm install
 ```
 
-2. Copy and edit the template:
+2. Install the skill in Codex (one-time):
+
+```bash
+ln -s "/absolute/path/to/koddi-reservation-skill/skills/koddi-reservation-campaign-builder" "$HOME/.codex/skills/koddi-reservation-campaign-builder"
+```
+
+If autocomplete does not update immediately, restart Codex (or reload skills).
+
+3. Copy and edit the template:
 
 ```bash
 cp skills/koddi-reservation-campaign-builder/references/campaign.template.json /tmp/my-campaign.json
 ```
 
-3. Run with the bundled skill runner:
+4. Run with the bundled skill runner:
 
 ```bash
 ./skills/koddi-reservation-campaign-builder/scripts/run-koddi-campaign.sh /tmp/my-campaign.json
