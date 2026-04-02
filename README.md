@@ -135,7 +135,7 @@ Ad group 2:
 - keywords: ["march madness", "basketball", "score"]
 ```
 
-### Example Prompt 3: Real-World AdOps Spreadsheet (Draft JSON, Keywords Pending)
+### Example Prompt 3: Multiple Ad Types In One Campaign (Search, Trending, Clickable, Video, and Added Value)
 
 Use this when you have a real campaign sheet and need a clean JSON draft first, before final keywords are ready.
 
