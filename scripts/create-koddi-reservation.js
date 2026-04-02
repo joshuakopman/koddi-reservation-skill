@@ -45,11 +45,105 @@ const DEFAULT_AD_TYPES = ['API: GIF'];
 const DEFAULT_BANNER_AD_TYPES = ['Banner'];
 const DEFAULT_POSITIONS = ['Position 1'];
 const DEFAULT_AD_CONTEXTS = ['*'];
+const DEFAULT_APP_SURFACE_AD_CONTEXTS = ['GIPHY Web', 'GIPHY Android', 'GIPHY IOS'];
 const DEFAULT_ONO_VIEW_TYPES = ['Details Page', 'Home Page', 'Search Page'];
 const BOUNCER_INVENTORY_EXPLORER_URL = process.env.BOUNCER_INVENTORY_EXPLORER_URL || 'https://bouncer.giphy.tech/website/inventory-explorer/';
 const BOUNCER_LOOKUP_ENABLED = process.env.BOUNCER_LOOKUP_ENABLED !== '0';
 const BOUNCER_PROFILE_DIR = process.env.BOUNCER_PROFILE_DIR || `${PROFILE_DIR}-bouncer`;
 const BOUNCER_LOGIN_WAIT_MS = Number(process.env.BOUNCER_LOGIN_WAIT_MS || 20 * 60 * 1000);
+
+const ADOPS_PRODUCT_RULES = {
+  search: {
+    defaultCampaignType: 'search',
+    requiresSearchQuery: true,
+    forceTrendingKeywords: false,
+    requiresPosition: true,
+    defaultAdTypes: DEFAULT_AD_TYPES,
+    defaultAdContexts: DEFAULT_AD_CONTEXTS,
+    defaultOnOViewTypes: []
+  },
+  'search rotational': {
+    defaultCampaignType: 'search',
+    requiresSearchQuery: true,
+    forceTrendingKeywords: false,
+    requiresPosition: true,
+    defaultAdTypes: DEFAULT_AD_TYPES,
+    defaultAdContexts: DEFAULT_AD_CONTEXTS,
+    defaultOnOViewTypes: []
+  },
+  trending: {
+    defaultCampaignType: 'trending',
+    requiresSearchQuery: true,
+    forceTrendingKeywords: true,
+    requiresPosition: true,
+    defaultAdTypes: DEFAULT_AD_TYPES,
+    defaultAdContexts: DEFAULT_AD_CONTEXTS,
+    defaultOnOViewTypes: []
+  },
+  'trending rotational': {
+    defaultCampaignType: 'trending',
+    requiresSearchQuery: true,
+    forceTrendingKeywords: true,
+    requiresPosition: true,
+    defaultAdTypes: DEFAULT_AD_TYPES,
+    defaultAdContexts: DEFAULT_AD_CONTEXTS,
+    defaultOnOViewTypes: []
+  },
+  'rotational video unit': {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: false,
+    forceAdTypes: ['Video'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  },
+  carousel: {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: false,
+    forceAdTypes: ['Carousel'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  },
+  'sticker takeover': {
+    defaultCampaignType: 'trending',
+    requiresSearchQuery: true,
+    forceTrendingKeywords: true,
+    requiresPosition: true,
+    forceAdTypes: ['API: Sticker'],
+    defaultAdContexts: DEFAULT_AD_CONTEXTS,
+    defaultOnOViewTypes: []
+  },
+  'trending takeover': {
+    defaultCampaignType: 'trending',
+    requiresSearchQuery: true,
+    forceTrendingKeywords: true,
+    requiresPosition: true,
+    forceAdTypes: ['API: GIF'],
+    defaultAdContexts: DEFAULT_AD_CONTEXTS,
+    defaultOnOViewTypes: []
+  },
+  'xl banners': {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: false,
+    forceAdTypes: ['Banner'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  },
+  'link out gif': {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: true,
+    forceAdTypes: ['Clickable'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  }
+};
 
 const DEFAULT_AD_GROUPS = [
   {
@@ -113,6 +207,62 @@ function normalizeCampaignType(value, fallback = DEFAULT_CAMPAIGN_TYPE) {
   if (raw === 'trending') return 'trending';
   if (raw === 'banner' || raw === 'banners') return 'banner';
   return fallback;
+}
+
+function normalizeAdOpsRuleKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getAdOpsProductRule(value) {
+  const key = normalizeAdOpsRuleKey(value);
+  if (!key) return null;
+  return ADOPS_PRODUCT_RULES[key] || null;
+}
+
+function resolveAdGroupShapeDefaults({ adOpsSpreadsheetName = '', campaignType = DEFAULT_CAMPAIGN_TYPE } = {}) {
+  const rule = getAdOpsProductRule(adOpsSpreadsheetName);
+  const defaultCampaignType = normalizeCampaignType(
+    rule?.defaultCampaignType || campaignType,
+    DEFAULT_CAMPAIGN_TYPE
+  );
+  const requiresSearchQuery = rule?.requiresSearchQuery != null
+    ? Boolean(rule.requiresSearchQuery)
+    : defaultCampaignType !== 'banner';
+  const forceTrendingKeywords = rule?.forceTrendingKeywords != null
+    ? Boolean(rule.forceTrendingKeywords)
+    : defaultCampaignType === 'trending';
+  const requiresPosition = rule?.requiresPosition != null
+    ? Boolean(rule.requiresPosition)
+    : defaultCampaignType !== 'banner';
+  const defaultAdTypes = Array.isArray(rule?.defaultAdTypes) && rule.defaultAdTypes.length > 0
+    ? [...rule.defaultAdTypes]
+    : (defaultCampaignType === 'banner' ? [...DEFAULT_BANNER_AD_TYPES] : [...DEFAULT_AD_TYPES]);
+  const forceAdTypes = Array.isArray(rule?.forceAdTypes) && rule.forceAdTypes.length > 0
+    ? [...rule.forceAdTypes]
+    : [];
+  const defaultAdContexts = Array.isArray(rule?.defaultAdContexts) && rule.defaultAdContexts.length > 0
+    ? [...rule.defaultAdContexts]
+    : [...DEFAULT_AD_CONTEXTS];
+  const defaultOnOViewTypes = Array.isArray(rule?.defaultOnOViewTypes) && rule.defaultOnOViewTypes.length > 0
+    ? [...rule.defaultOnOViewTypes]
+    : [];
+
+  return {
+    rule,
+    defaultCampaignType,
+    requiresSearchQuery,
+    forceTrendingKeywords,
+    requiresPosition,
+    defaultAdTypes,
+    forceAdTypes,
+    defaultAdContexts,
+    defaultOnOViewTypes
+  };
 }
 
 function normalizeImpressionAllocationMode(value, fallback = 'keyword_inventory_proportional_by_campaign_type') {
@@ -518,6 +668,18 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
   };
 
   const clickUrl = raw?.click_url ? String(raw.click_url).trim() : '';
+  const adOpsSpreadsheetName = String(
+    raw?.adops_spreadsheet_name
+    ?? raw?.adOpsSpreadsheetName
+    ?? raw?.ad_ops_spreadsheet_name
+    ?? raw?.ad_product_flight_type
+    ?? raw?.adProductFlightType
+    ?? raw?.spreadsheet_name
+    ?? raw?.spreadsheetName
+    ?? raw?.product_type
+    ?? raw?.productType
+    ?? ''
+  ).trim();
   const normalizedKeywords = dedupeStrings(
     Array.isArray(raw?.keywords)
       ? raw.keywords.map((kw) => parseKeywordTerm(kw)).filter(Boolean)
@@ -533,8 +695,33 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
     ? normalizedKeywords
     : dedupeStrings(keywordInventoryTerms);
   const derivedCreativeId = deriveCreativeIdFromUrl(gifUrl, String(name));
-  const adTypes = asArray(raw?.ad_types ?? raw?.adTypes ?? raw?.ad_type);
+  const explicitCampaignTypeRaw = raw?.campaign_type ?? raw?.campaignType;
+  const hasExplicitCampaignType = String(explicitCampaignTypeRaw ?? '').trim().length > 0;
+  const shapeDefaults = resolveAdGroupShapeDefaults({
+    adOpsSpreadsheetName,
+    campaignType: hasExplicitCampaignType ? explicitCampaignTypeRaw : DEFAULT_CAMPAIGN_TYPE
+  });
+  const campaignType = hasExplicitCampaignType
+    ? normalizeCampaignType(explicitCampaignTypeRaw, shapeDefaults.defaultCampaignType)
+    : shapeDefaults.defaultCampaignType;
+
+  const adTypesRaw = asArray(raw?.ad_types ?? raw?.adTypes ?? raw?.ad_type);
+  const adTypes = adTypesRaw.length > 0 ? adTypesRaw : shapeDefaults.defaultAdTypes;
   const productType = String(raw?.product_type ?? raw?.productType ?? raw?.product ?? raw?.ad_product ?? raw?.adProduct ?? '').trim();
+  const countriesRaw = asArray(raw?.countries ?? raw?.country);
+  const positionsRaw = asArray(raw?.positions ?? raw?.position);
+  const adContextsRaw = asArray(raw?.ad_contexts ?? raw?.adContexts ?? raw?.ad_context);
+  const onoViewTypesRaw = asArray(raw?.ono_view_types ?? raw?.onoViewTypes ?? raw?.ono_view_type ?? raw?.onoViewType);
+  const countries = countriesRaw.length > 0 ? countriesRaw : DEFAULT_COUNTRIES;
+  const positions = positionsRaw.length > 0
+    ? positionsRaw
+    : (shapeDefaults.requiresPosition ? DEFAULT_POSITIONS : []);
+  const adContexts = adContextsRaw.length > 0 ? adContextsRaw : shapeDefaults.defaultAdContexts;
+  const onoViewTypes = onoViewTypesRaw.length > 0 ? onoViewTypesRaw : shapeDefaults.defaultOnOViewTypes;
+  const ratings = asArray(raw?.ratings ?? raw?.rating);
+  const dayOfWeek = asArray(raw?.day_of_week ?? raw?.dayOfWeek ?? raw?.dayofweek);
+  const genders = asArray(raw?.genders ?? raw?.gender);
+  const ages = asArray(raw?.ages ?? raw?.age);
   const rawCpm = raw?.cpm ?? raw?.reservation_cpm ?? raw?.reservationCpm ?? raw?.cpm_per_group ?? raw?.cpmPerGroup;
   const hasExplicitGroupCpm = rawCpm !== undefined && rawCpm !== null && String(rawCpm).trim() !== '';
   const addedValueGroup = isAddedValueGroup({ name, productType, adTypeValues: adTypes });
@@ -545,14 +732,23 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
   return {
     name: String(name),
     gifUrl: String(gifUrl),
-    campaignType: normalizeCampaignType(raw?.campaign_type ?? raw?.campaignType, DEFAULT_CAMPAIGN_TYPE),
+    campaignType,
+    adOpsSpreadsheetName,
     keywords: resolvedKeywords,
     keywordInventoryRows,
-    countries: asArray(raw?.countries ?? raw?.country),
+    countries,
     adTypes,
-    positions: asArray(raw?.positions ?? raw?.position),
-    adContexts: asArray(raw?.ad_contexts ?? raw?.adContexts ?? raw?.ad_context),
-    onoViewTypes: asArray(raw?.ono_view_types ?? raw?.onoViewTypes ?? raw?.ono_view_type ?? raw?.onoViewType),
+    forceAdTypes: shapeDefaults.forceAdTypes,
+    positions,
+    adContexts,
+    onoViewTypes,
+    ratings,
+    dayOfWeek,
+    genders,
+    ages,
+    requiresSearchQueryTargeting: shapeDefaults.requiresSearchQuery,
+    requiresPositionTargeting: shapeDefaults.requiresPosition,
+    forceTrendingKeywords: shapeDefaults.forceTrendingKeywords,
     reservedImpressions: toNumber(raw?.reserved_impressions ?? raw?.reservedImpressions, fallbackImps),
     cpm: resolvedCpm,
     productType,
