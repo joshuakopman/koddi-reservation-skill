@@ -157,11 +157,6 @@ Requirements:
   - cta_url = https://www.amcplus.com/pages/prestige/
   - cta_text = "Watch Now"
 
-Ad type mapping (must follow exactly):
-- Search Rotational / AV Search Rotational: ["API: GIF"] (or ["API: Sticker"] if explicitly specified)
-- Link Out GIF / AV Link Out GIF: ["Clickable"]
-- AV Rotational Video Unit: ["Video"]
-
 Build these AdOps product buckets and split impressions evenly within each bucket (remainder +1 to earliest groups):
 - Ad Product - Flight Type: Link Out GIFs
   - total impressions: 310,000
