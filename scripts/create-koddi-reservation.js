@@ -22,6 +22,7 @@ let START_DATE = process.env.START_DATE || '04/01/2026';
 let END_DATE = process.env.END_DATE || '06/30/2026';
 let ADVERTISER_NAME = process.env.ADVERTISER_NAME || '';
 let TOTAL_IMPRESSIONS = Number(process.env.TOTAL_IMPRESSIONS || 0);
+let IMPRESSION_ALLOCATION_MODE = String(process.env.IMPRESSION_ALLOCATION_MODE || 'even');
 let CPM_PER_GROUP = Number.isFinite(Number(process.env.CPM_PER_GROUP)) && Number(process.env.CPM_PER_GROUP) >= 0
   ? Number(process.env.CPM_PER_GROUP)
   : 10;
@@ -109,6 +110,24 @@ function normalizeCampaignType(value, fallback = DEFAULT_CAMPAIGN_TYPE) {
   return fallback;
 }
 
+function normalizeImpressionAllocationMode(value, fallback = 'even') {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === 'even') return 'even';
+  if (
+    raw === 'keyword_inventory_proportional'
+    || raw === 'keyword-inventory-proportional'
+    || raw === 'inventory_proportional'
+    || raw === 'inventory-proportional'
+    || raw === 'keyword_inventory'
+    || raw === 'keyword-inventory'
+    || raw === 'proportional'
+  ) {
+    return 'keyword_inventory_proportional';
+  }
+  return fallback;
+}
+
 function isAddedValuePrefixed(value) {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized) return false;
@@ -120,6 +139,213 @@ function isAddedValueGroup({ name = '', productType = '', adTypeValues = [] } = 
   if (isAddedValuePrefixed(productType)) return true;
   if (Array.isArray(adTypeValues) && adTypeValues.some((v) => isAddedValuePrefixed(v))) return true;
   return false;
+}
+
+function parseKeywordTerm(rawValue) {
+  if (typeof rawValue === 'string') {
+    const term = rawValue.trim();
+    return term || '';
+  }
+  if (!rawValue || typeof rawValue !== 'object') return '';
+
+  const candidates = [
+    rawValue.term,
+    rawValue.keyword,
+    rawValue.search_term,
+    rawValue.searchTerm,
+    rawValue.name,
+    rawValue.value
+  ];
+  for (const candidate of candidates) {
+    const term = String(candidate ?? '').trim();
+    if (term) return term;
+  }
+  return '';
+}
+
+function parseKeywordInventoryValue(rawValue) {
+  const n = Number(rawValue);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
+function collectKeywordInventoryRows(rawValue) {
+  const rows = [];
+  if (!rawValue) return rows;
+
+  const maybePush = (termRaw, invRaw) => {
+    const term = parseKeywordTerm(termRaw);
+    const availableInventory = parseKeywordInventoryValue(invRaw);
+    if (!term || availableInventory === null) return;
+    rows.push({ term, availableInventory });
+  };
+
+  if (Array.isArray(rawValue)) {
+    for (const entry of rawValue) {
+      if (!entry) continue;
+      if (typeof entry === 'object' && !Array.isArray(entry)) {
+        const term = parseKeywordTerm(entry);
+        const inventoryCandidate = entry.available_inventory
+          ?? entry.availableInventory
+          ?? entry.avail_inventory
+          ?? entry.availInventory
+          ?? entry.inventory;
+        maybePush(term, inventoryCandidate);
+        continue;
+      }
+      maybePush(entry, null);
+    }
+    return rows;
+  }
+
+  if (typeof rawValue === 'object') {
+    for (const [term, inventory] of Object.entries(rawValue)) {
+      maybePush(term, inventory);
+    }
+  }
+  return rows;
+}
+
+function mergeKeywordInventoryRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const merged = [];
+  const seenByNormalizedTerm = new Map();
+  for (const row of rows) {
+    const term = parseKeywordTerm(row?.term);
+    const availableInventory = parseKeywordInventoryValue(row?.availableInventory);
+    if (!term || availableInventory === null) continue;
+    const key = normalizeUiText(term);
+    const existingIndex = seenByNormalizedTerm.get(key);
+    if (existingIndex === undefined) {
+      seenByNormalizedTerm.set(key, merged.length);
+      merged.push({ term, availableInventory });
+      continue;
+    }
+    merged[existingIndex].availableInventory += availableInventory;
+  }
+  return merged;
+}
+
+function distributeImpressionsByKeywordInventory(totalImpressions, groups) {
+  if (!Number.isFinite(totalImpressions) || totalImpressions <= 0) {
+    return { groupSplits: [], keywordRows: [], totalInventory: 0 };
+  }
+  if (!Array.isArray(groups) || groups.length === 0) {
+    return { groupSplits: [], keywordRows: [], totalInventory: 0 };
+  }
+
+  const keywordRows = [];
+  const missingInventoryGroups = [];
+  groups.forEach((group, groupIndex) => {
+    const rows = Array.isArray(group?.keywordInventoryRows) ? group.keywordInventoryRows : [];
+    if (rows.length === 0) {
+      missingInventoryGroups.push(String(group?.name || `Ad Group ${groupIndex + 1}`));
+      return;
+    }
+    rows.forEach((row) => {
+      const availableInventory = parseKeywordInventoryValue(row?.availableInventory);
+      if (availableInventory === null || availableInventory <= 0) return;
+      keywordRows.push({
+        groupIndex,
+        groupName: String(group?.name || `Ad Group ${groupIndex + 1}`),
+        term: String(row?.term || '').trim(),
+        availableInventory
+      });
+    });
+  });
+
+  if (keywordRows.length === 0) {
+    const details = missingInventoryGroups.length > 0
+      ? ` Missing inventory for: ${missingInventoryGroups.join(', ')}.`
+      : '';
+    throw new Error(
+      `impression_allocation_mode=keyword_inventory_proportional requires keyword inventory on ad_groups.`
+      + ` Provide keywords as objects with available_inventory (or keyword_inventory maps).${details}`
+    );
+  }
+  if (missingInventoryGroups.length > 0) {
+    throw new Error(
+      `impression_allocation_mode=keyword_inventory_proportional requires inventory for every ad group. `
+      + `Missing inventory for: ${missingInventoryGroups.join(', ')}`
+    );
+  }
+
+  const total = Math.floor(totalImpressions);
+  const totalInventory = keywordRows.reduce((sum, row) => sum + row.availableInventory, 0);
+  if (!Number.isFinite(totalInventory) || totalInventory <= 0) {
+    throw new Error('keyword inventory totals must be > 0 when using impression_allocation_mode=keyword_inventory_proportional');
+  }
+
+  const provisional = keywordRows.map((row, idx) => {
+    const exact = (total * row.availableInventory) / totalInventory;
+    const rounded = Math.round(exact);
+    return { idx, exact, allocated: rounded };
+  });
+
+  const provisionalTotal = provisional.reduce((sum, row) => sum + row.allocated, 0);
+  let diff = total - provisionalTotal;
+  if (diff !== 0) {
+    const sorted = [...provisional].sort((a, b) => {
+      const aDown = a.exact - a.allocated;
+      const bDown = b.exact - b.allocated;
+      const aUp = a.allocated - a.exact;
+      const bUp = b.allocated - b.exact;
+      if (diff > 0) {
+        if (bDown !== aDown) return bDown - aDown;
+      } else if (bUp !== aUp) {
+        return bUp - aUp;
+      }
+      if (keywordRows[b.idx].availableInventory !== keywordRows[a.idx].availableInventory) {
+        return keywordRows[b.idx].availableInventory - keywordRows[a.idx].availableInventory;
+      }
+      return a.idx - b.idx;
+    });
+
+    let cursor = 0;
+    let safety = Math.abs(diff) * 5 + sorted.length + 5;
+    while (diff !== 0 && sorted.length > 0 && safety > 0) {
+      const candidate = sorted[cursor % sorted.length];
+      if (diff > 0) {
+        candidate.allocated += 1;
+        diff -= 1;
+      } else if (candidate.allocated > 0) {
+        candidate.allocated -= 1;
+        diff += 1;
+      }
+      cursor += 1;
+      safety -= 1;
+      if (cursor % sorted.length === 0 && diff < 0) {
+        // Re-order after a full pass while reducing in case some rows reached zero.
+        sorted.sort((a, b) => {
+          const aUp = a.allocated - a.exact;
+          const bUp = b.allocated - b.exact;
+          if (bUp !== aUp) return bUp - aUp;
+          if (keywordRows[b.idx].availableInventory !== keywordRows[a.idx].availableInventory) {
+            return keywordRows[b.idx].availableInventory - keywordRows[a.idx].availableInventory;
+          }
+          return a.idx - b.idx;
+        });
+      }
+    }
+    if (diff !== 0) {
+      throw new Error('Could not reconcile keyword inventory allocation to the requested total_impressions');
+    }
+  }
+
+  provisional.sort((a, b) => a.idx - b.idx);
+  const groupSplits = Array.from({ length: groups.length }, () => 0);
+  provisional.forEach((row) => {
+    const keyword = keywordRows[row.idx];
+    groupSplits[keyword.groupIndex] += row.allocated;
+    keyword.allocatedImpressions = row.allocated;
+  });
+
+  const finalTotal = groupSplits.reduce((sum, n) => sum + n, 0);
+  if (finalTotal !== total) {
+    throw new Error(`Keyword inventory allocation mismatch: expected ${total}, got ${finalTotal}`);
+  }
+
+  return { groupSplits, keywordRows, totalInventory };
 }
 
 function distributeImpressionsEvenly(totalImpressions, groupCount) {
@@ -176,6 +402,20 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
   };
 
   const clickUrl = raw?.click_url ? String(raw.click_url).trim() : '';
+  const normalizedKeywords = dedupeStrings(
+    Array.isArray(raw?.keywords)
+      ? raw.keywords.map((kw) => parseKeywordTerm(kw)).filter(Boolean)
+      : []
+  );
+  const keywordInventoryRows = mergeKeywordInventoryRows([
+    ...collectKeywordInventoryRows(raw?.keywords),
+    ...collectKeywordInventoryRows(raw?.keyword_inventory),
+    ...collectKeywordInventoryRows(raw?.keyword_inventories)
+  ]);
+  const keywordInventoryTerms = keywordInventoryRows.map((row) => row.term);
+  const resolvedKeywords = normalizedKeywords.length > 0
+    ? normalizedKeywords
+    : dedupeStrings(keywordInventoryTerms);
   const derivedCreativeId = deriveCreativeIdFromUrl(gifUrl, String(name));
   const adTypes = asArray(raw?.ad_types ?? raw?.adTypes ?? raw?.ad_type);
   const productType = String(raw?.product_type ?? raw?.productType ?? raw?.product ?? raw?.ad_product ?? raw?.adProduct ?? '').trim();
@@ -190,7 +430,8 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
     name: String(name),
     gifUrl: String(gifUrl),
     campaignType: normalizeCampaignType(raw?.campaign_type ?? raw?.campaignType, DEFAULT_CAMPAIGN_TYPE),
-    keywords: Array.isArray(raw?.keywords) ? raw.keywords : [],
+    keywords: resolvedKeywords,
+    keywordInventoryRows,
     countries: asArray(raw?.countries ?? raw?.country),
     adTypes,
     positions: asArray(raw?.positions ?? raw?.position),
@@ -228,6 +469,16 @@ async function applyCampaignOverrides() {
     reservation.total_impressions || reservation.total_reserved_impressions || parsed.total_impressions || parsed.total_reserved_impressions || TOTAL_IMPRESSIONS,
     TOTAL_IMPRESSIONS
   );
+  IMPRESSION_ALLOCATION_MODE = normalizeImpressionAllocationMode(
+    reservation.impression_allocation_mode
+    || reservation.impression_split_mode
+    || reservation.impression_split
+    || parsed.impression_allocation_mode
+    || parsed.impression_split_mode
+    || parsed.impression_split
+    || IMPRESSION_ALLOCATION_MODE,
+    'even'
+  );
   CPM_PER_GROUP = toNonNegativeNumber(
     reservation.cpm_per_group ?? reservation.cpm ?? parsed.cpm_per_group ?? parsed.cpm,
     CPM_PER_GROUP
@@ -256,7 +507,18 @@ async function applyCampaignOverrides() {
   }));
 
   if (TOTAL_IMPRESSIONS > 0 && AD_GROUPS.length > 0) {
-    const splits = distributeImpressionsEvenly(TOTAL_IMPRESSIONS, AD_GROUPS.length);
+    let splits = [];
+    if (IMPRESSION_ALLOCATION_MODE === 'keyword_inventory_proportional') {
+      const proportional = distributeImpressionsByKeywordInventory(TOTAL_IMPRESSIONS, AD_GROUPS);
+      splits = proportional.groupSplits;
+      console.log(
+        `Using total_impressions=${TOTAL_IMPRESSIONS} with impression_allocation_mode=keyword_inventory_proportional`
+        + ` (total keyword inventory=${proportional.totalInventory}); splits: ${splits.join(', ')}`
+      );
+    } else {
+      splits = distributeImpressionsEvenly(TOTAL_IMPRESSIONS, AD_GROUPS.length);
+      console.log(`Using total_impressions=${TOTAL_IMPRESSIONS}; split across ${AD_GROUPS.length} ad groups as: ${splits.join(', ')}`);
+    }
     if (splits.some((n) => n <= 0)) {
       throw new Error(`total_impressions (${TOTAL_IMPRESSIONS}) is too small for ${AD_GROUPS.length} ad groups; each group must receive at least 1 impression.`);
     }
@@ -264,7 +526,6 @@ async function applyCampaignOverrides() {
       ...g,
       reservedImpressions: splits[idx]
     }));
-    console.log(`Using total_impressions=${TOTAL_IMPRESSIONS}; split across ${AD_GROUPS.length} ad groups as: ${splits.join(', ')}`);
   }
 
   if (!String(ADVERTISER_NAME || '').trim()) {
@@ -1305,6 +1566,9 @@ async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, reques
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const ok = await setKeywords(page, targetCount, requestedKeywords, { targetGroupIndex, adgroupNum });
     const selectedCount = await getKeywordSelectionCount(page, targetGroupIndex);
+    // Koddi UI can occasionally report strict row-match failure even when the trigger confirms
+    // all requested keywords are selected. Accept exact selected-count as success.
+    if (expectedSelectionCount > 0 && selectedCount === expectedSelectionCount) return true;
     if (ok && expectedSelectionCount > 0 && selectedCount === expectedSelectionCount) return true;
     if (ok && expectedSelectionCount === 0 && selectedCount > 0) return true;
     await page.keyboard.press('Escape').catch(() => {});
@@ -1461,6 +1725,29 @@ async function setAdditionalDimensionValues(page, dimensionName, values = [], op
     }
   }
 
+  const checkedAttributeLabels = await attributePanel.evaluate((root) => {
+    const normalizeText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const labels = [];
+    const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
+    for (const container of containers) {
+      const button = container.querySelector('button[role="checkbox"]');
+      if (!button) continue;
+      const isChecked = button.getAttribute('aria-checked') === 'true';
+      if (!isChecked) continue;
+
+      const parent = container.parentElement;
+      const siblingText = normalizeText(
+        Array.from(parent?.children || [])
+          .filter((el) => el !== container)
+          .map((el) => el.textContent || '')
+          .join(' ')
+      );
+      const rowText = siblingText || normalizeText(parent?.textContent || '');
+      if (rowText) labels.push(rowText);
+    }
+    return labels;
+  }).catch(() => []);
+
   await page.keyboard.press('Escape').catch(() => {});
   await page.keyboard.press('Escape').catch(() => {});
 
@@ -1470,6 +1757,42 @@ async function setAdditionalDimensionValues(page, dimensionName, values = [], op
 
   if (Array.isArray(selection.unmatched) && selection.unmatched.length > 0) {
     console.warn(`Unmatched ${dimensionName} values: ${selection.unmatched.join(', ')}`);
+  }
+
+  if (!selection.ok && normalizedDimName === 'country') {
+    const matchesRequestedValue = (rowText, targetValue) => {
+      const row = normalizeUiText(rowText);
+      const target = normalizeUiText(targetValue);
+      if (!row || !target) return false;
+      if (row === target) return true;
+      if (` ${row} `.includes(` ${target} `)) return true;
+      const canonicalRow = row.replace(/[^a-z0-9]+/g, ' ').trim();
+      const canonicalTarget = target.replace(/[^a-z0-9]+/g, ' ').trim();
+      if (!canonicalRow || !canonicalTarget) return false;
+      if (canonicalRow === canonicalTarget) return true;
+      return ` ${canonicalRow} `.includes(` ${canonicalTarget} `);
+    };
+    const checkedLabelsMatchRequested = checkedAttributeLabels.length === cleanValues.length
+      && cleanValues.every((targetValue) => checkedAttributeLabels.some((rowText) => matchesRequestedValue(rowText, targetValue)));
+    const countLooksRight = triggerSelectedCount == null || triggerSelectedCount === cleanValues.length;
+    if (checkedLabelsMatchRequested && countLooksRight) {
+      console.warn(`Country targeting verified via checked labels fallback; continuing despite strict selection mismatch.`);
+      selection = {
+        ok: true,
+        unmatched: [],
+        matchedCount: cleanValues.length,
+        checkedCount: cleanValues.length
+      };
+    }
+    if (!selection.ok && triggerSelectedCount != null && triggerSelectedCount === cleanValues.length && cleanValues.length > 0) {
+      console.warn(`Country targeting fallback: trigger count matched expected selections (${triggerSelectedCount}); continuing.`);
+      selection = {
+        ok: true,
+        unmatched: [],
+        matchedCount: cleanValues.length,
+        checkedCount: cleanValues.length
+      };
+    }
   }
 
   if (selectAllRequested) {

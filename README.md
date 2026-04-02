@@ -70,7 +70,10 @@ Top-level keys:
 - `start_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `end_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `advertiser_name` (string, optional in JSON input; if provided, script attempts to select that exact advertiser label. Advertiser is still required by Koddi UI, so if omitted or not found the script falls back to the first advertiser option)
-- `total_impressions` (number, recommended/primary; auto-split evenly across all ad groups)
+- `total_impressions` (number, recommended/primary; split mode controlled by `impression_allocation_mode`)
+- `impression_allocation_mode` (string, optional; default `even`)
+  - `even`: splits `total_impressions` evenly across all ad groups (remainder goes to earliest groups)
+  - `keyword_inventory_proportional`: allocates from each keyword's inventory share, then sums to ad-group totals
 - `reserved_impressions_per_group` (number, recommended fallback)
 - `cpm_per_group` (number, optional; defaults to `10`)
 
@@ -98,6 +101,11 @@ Each `ad_groups[]` item:
   - For `search`: if provided, script attempts exact keyword selection; if omitted/empty, script randomizes keywords in UI while excluding `# giphytrending #`.
   - For `trending`: script always uses exactly `["# giphytrending #"]`.
   - For `banner`: script skips `search_query` keyword targeting (keywords in JSON are ignored for banner).
+  - For keyword-inventory proportional splits, provide keyword objects:
+    - `{ "term": "happy", "available_inventory": 5518193 }`
+- `keyword_inventory` / `keyword_inventories` (optional map or array)
+  - Alternative way to provide inventory for proportional allocation; example map:
+    - `{ "happy": 5518193, "yay": 1734000 }`
 
 Campaign type behavior:
 
@@ -109,9 +117,16 @@ Campaign type behavior:
 
 Impression precedence:
 
-- If `reservation.total_impressions` is set, the script splits it across all ad groups (remainder distributed from the first group onward).
+- If `reservation.total_impressions` is set and `reservation.impression_allocation_mode = keyword_inventory_proportional`, the script computes per-keyword guarantees from inventory share and then rolls up to each ad group.
+- If `reservation.total_impressions` is set and split mode is omitted (or set to `even`), the script splits across all ad groups evenly (remainder distributed from the first group onward).
 - Otherwise it uses each ad group's `reserved_impressions` if present.
 - Otherwise it falls back to `reservation.reserved_impressions_per_group`.
+
+Keyword inventory proportional formula:
+
+- `keyword_guarantee = ROUND((keyword_available_inventory / total_keyword_inventory) * total_impressions)`
+- `ad_group_reserved_impressions = SUM(keyword_guarantee in that group)`
+- If rounding drift occurs, the script auto-reconciles so final ad-group totals still sum exactly to `total_impressions`.
 
 CPM precedence:
 
@@ -338,4 +353,54 @@ Ad groups (13):
     campaign_type: trending
     gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
 
+```
+
+### Example Prompt 4: Compute Ad Group Reserved Impressions from Keyword Inventory
+
+```text
+$koddi-reservation-campaign-builder
+
+Please generate a valid campaign JSON for the Koddi reservation automation, then run the skill using that JSON and leave the browser open at the end.
+
+Requirements:
+- Reservation name: GIF split test using keyword inventory
+- Start date: 04/03/2026
+- End date: 06/30/2026
+- Advertiser name: Demo Advertiser
+- total_impressions: 5000000
+- impression_allocation_mode: keyword_inventory_proportional
+- cpm_per_group: 10
+- campaign_type for both groups: search
+- Compute each ad group's reserved_impressions from keyword inventory automatically
+- For keywords, use object format: { "term": "...", "available_inventory": ... }
+
+Ad group 1:
+- name: GIF 1
+- campaign_type: search
+- gif_url: https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
+- keywords:
+  - { "term": "happy", "available_inventory": 5518193 }
+  - { "term": "yay", "available_inventory": 1734000 }
+  - { "term": "omg", "available_inventory": 844000 }
+
+Ad group 2:
+- name: GIF 2
+- campaign_type: search
+- gif_url: https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
+- keywords:
+  - { "term": "march madness", "available_inventory": 122000 }
+  - { "term": "basketball", "available_inventory": 1500 }
+  - { "term": "score", "available_inventory": 49000 }
+
+Use defaults unless specified:
+- countries: ["United States"]
+- positions: ["Position 1"]
+- ad_types: ["API: GIF"]
+- ad_contexts: ["*"]
+- cta_url = gif_url
+- carousel_gifs = [gif_url]
+
+Expected computed reserved_impressions:
+- GIF 1: 4,895,691
+- GIF 2: 104,309
 ```

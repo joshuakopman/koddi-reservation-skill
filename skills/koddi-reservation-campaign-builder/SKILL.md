@@ -26,7 +26,10 @@ Use this shape:
 - `reservation.start_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.end_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.advertiser_name` (optional in JSON input; if provided, script attempts to select that exact advertiser label. Advertiser is still required by Koddi UI, so if omitted or not found the script falls back to the first advertiser option)
-- `reservation.total_impressions` (recommended/primary; auto-split evenly across all ad groups)
+- `reservation.total_impressions` (recommended/primary; split mode controlled by `reservation.impression_allocation_mode`)
+- `reservation.impression_allocation_mode` (optional; default `even`)
+  - `even`
+  - `keyword_inventory_proportional`
 - `reservation.reserved_impressions_per_group` (default fallback for each ad group)
 - `reservation.cpm_per_group` (optional CPM fallback; defaults to `10`)
 - `ad_groups[]` with at minimum:
@@ -50,6 +53,8 @@ Optional ad group fields:
 - `countries` (optional string array; defaults to `["United States"]`)
 - `positions` (optional string array; defaults to `["Position 1"]`)
 - `keywords` (optional; when provided, script attempts exact keyword selection in UI; otherwise random keywords are selected, excluding `# giphytrending #`)
+  - For `keyword_inventory_proportional` mode, keywords can be objects like `{ "term": "happy", "available_inventory": 5518193 }`
+- `keyword_inventory` / `keyword_inventories` (optional map or array; alternate place to provide per-keyword inventory for proportional allocation)
 
 Campaign type behavior:
 
@@ -60,7 +65,8 @@ Campaign type behavior:
 
 Impression precedence:
 
-- `reservation.total_impressions` (if present, split evenly across all groups)
+- `reservation.total_impressions` + `reservation.impression_allocation_mode=keyword_inventory_proportional` (if present, split by keyword inventory share and sum to ad-group totals)
+- `reservation.total_impressions` (if present and mode is omitted/`even`, split evenly across all groups)
 - `ad_groups[].reserved_impressions`
 - `reservation.reserved_impressions_per_group`
 
@@ -70,6 +76,10 @@ CPM precedence:
 - if no per-group CPM is provided and the ad group appears Added Value (`AV` prefix in `name`, `product_type`, or `ad_types`), CPM defaults to `0` for that group
 - `reservation.cpm_per_group` (or `reservation.cpm`)
 - default `10`
+
+Prompting tip for proportional guarantees:
+
+- Say: "Set `reservation.total_impressions`, set `reservation.impression_allocation_mode` to `keyword_inventory_proportional`, and provide each ad group's keywords as `{term, available_inventory}` so reserved impressions are auto-computed per ad group."
 
 ## Behavior
 
