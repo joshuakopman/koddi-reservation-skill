@@ -28,18 +28,18 @@ Core behavior:
 
 ## Quick Start (AdOps Prompt-First)
 
-1. In Codex, start your prompt with `$koddi-reservation-campaign-builder`.
-2. Use one of the prompt examples in this README:
+1. Pick one of the prompt examples in this README:
    - Example 1 when keyword inventory is already provided
    - Example 2 when only keyword terms are provided (Bouncer lookup fallback)
-3. Log in if prompted:
+2. Replace template values (name, dates, goals, CPMs, ad groups, GIF URLs, keywords) with your actual campaign values.
+3. Run the prompt in Codex (examples already include `$koddi-reservation-campaign-builder` at the top).
+4. Log in if prompted:
    - Koddi login is required when session is expired
    - Bouncer login is required only when term-only search keywords require lookup
-4. Review results in the browser (automation leaves browser open at the end).
+5. Review results in the browser (automation leaves browser open at the end).
 
 ## Prompt Examples (AdOps)
 
-Start your prompt with `$koddi-reservation-campaign-builder`, then use one of the examples below.
 These are illustrative templates. Replace all names, dates, budgets, CPMs, impression goals, ad groups, GIF URLs, and keywords with values for your actual campaign.
 
 ### Example Prompt 1: Typical Rotational Setup (Separate Search + Trending Impression Pools)
@@ -50,7 +50,7 @@ $koddi-reservation-campaign-builder
 Please generate a valid campaign JSON for the Koddi reservation automation, then run the skill using that JSON and leave the browser open at the end.
 
 Requirements:
-- Reservation name: Old El Paso Search + Trending + Takeovers 2026-04-21 to 2026-05-05
+- Reservation name: Old El Paso Search + Trending Rotational 2026-04-21 to 2026-05-05
 - Start date: 04/21/2026
 - End date: 05/05/2026
 - Advertiser name: Demo Advertiser
@@ -58,30 +58,15 @@ Requirements:
 - impression_goals_by_campaign_type:
   - search: 2,272,727
   - trending: 3,125,000
-- This means:
-  - all Search Rotational ad groups are allocated from the Search pool only
-  - all Trending Rotational ad groups are allocated from the Trending pool only
-  - each pool is proportional to keyword inventory inside that pool
-- Keep non-rotational takeovers as explicit fixed values:
-  - Trending Takeover reserved_impressions: 9,000,000
-  - AV Sticker Takeover reserved_impressions: 5,000,000
-- For rotational groups, include keyword inventory using objects:
-  - { "term": "...", "available_inventory": ... }
-  - If only terms are provided (no `available_inventory`), run Bouncer lookup first and then compute reserved impressions from those looked-up inventories.
 - For every group unless overridden:
   - countries = ["United States"]
   - positions = ["Position 1"]
-  - ad_types = ["API: GIF"] (banner groups still force Banner)
+  - ad_types = ["API: GIF"]
   - ad_contexts = ["*"]
   - carousel_gifs = [gif_url]
+  - click_url = gif_url
   - cta_url = gif_url
-
-Ad group structure to build:
-- Search Rotational groups (campaign_type: search): use keyword inventory and auto-compute reserved_impressions from the search pool.
-- Trending Rotational groups (campaign_type: trending): use keyword inventory and auto-compute reserved_impressions from the trending pool.
-- Trending Takeover + AV Sticker Takeover groups: set explicit reserved_impressions as fixed values, do not include them in impression_goals_by_campaign_type pools.
-
-Include concrete keyword inventory blocks like:
+- Auto-compute reserved_impressions from keyword inventory within each campaign type pool.
 
 Ad group 1:
 - name: GIF 1
@@ -100,6 +85,13 @@ Ad group 2:
   - { "term": "march madness", "available_inventory": 122000 }
   - { "term": "basketball", "available_inventory": 1500 }
   - { "term": "score", "available_inventory": 49000 }
+
+Ad group 3:
+- name: GIF 3
+- campaign_type: trending
+- gif_url: https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
+- keywords:
+  - { "term": "# giphytrending #", "available_inventory": 122000 }
 
 ```
 
@@ -406,4 +398,3 @@ CPM precedence:
   ]
 }
 ```
-
