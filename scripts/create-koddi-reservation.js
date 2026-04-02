@@ -23,6 +23,7 @@ let END_DATE = process.env.END_DATE || '06/30/2026';
 let ADVERTISER_NAME = process.env.ADVERTISER_NAME || '';
 let TOTAL_IMPRESSIONS = Number(process.env.TOTAL_IMPRESSIONS || 0);
 let IMPRESSION_ALLOCATION_MODE = String(process.env.IMPRESSION_ALLOCATION_MODE || 'even');
+let IMPRESSION_GOALS_BY_CAMPAIGN_TYPE = {};
 let CPM_PER_GROUP = Number.isFinite(Number(process.env.CPM_PER_GROUP)) && Number(process.env.CPM_PER_GROUP) >= 0
   ? Number(process.env.CPM_PER_GROUP)
   : 10;
@@ -115,6 +116,16 @@ function normalizeImpressionAllocationMode(value, fallback = 'even') {
   if (!raw) return fallback;
   if (raw === 'even') return 'even';
   if (
+    raw === 'keyword_inventory_proportional_by_campaign_type'
+    || raw === 'keyword-inventory-proportional-by-campaign-type'
+    || raw === 'proportional_by_campaign_type'
+    || raw === 'proportional-by-campaign-type'
+    || raw === 'by_campaign_type'
+    || raw === 'by-campaign-type'
+  ) {
+    return 'keyword_inventory_proportional_by_campaign_type';
+  }
+  if (
     raw === 'keyword_inventory_proportional'
     || raw === 'keyword-inventory-proportional'
     || raw === 'inventory_proportional'
@@ -126,6 +137,48 @@ function normalizeImpressionAllocationMode(value, fallback = 'even') {
     return 'keyword_inventory_proportional';
   }
   return fallback;
+}
+
+function normalizeCampaignTypeGoalKey(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.includes('trend')) return 'trending';
+  if (raw.includes('search')) return 'search';
+  if (raw.includes('banner')) return 'banner';
+  if (raw === 'trending') return 'trending';
+  if (raw === 'search') return 'search';
+  if (raw === 'banner' || raw === 'banners') return 'banner';
+  return raw;
+}
+
+function parseImpressionGoalsByCampaignType(rawValue) {
+  const out = {};
+  if (!rawValue) return out;
+
+  const addGoal = (keyRaw, goalRaw) => {
+    const key = normalizeCampaignTypeGoalKey(keyRaw);
+    const goal = toPositiveInt(goalRaw, 0);
+    if (!key || goal <= 0) return;
+    out[key] = (out[key] || 0) + goal;
+  };
+
+  if (Array.isArray(rawValue)) {
+    for (const row of rawValue) {
+      if (!row || typeof row !== 'object') continue;
+      addGoal(
+        row.campaign_type ?? row.campaignType ?? row.type ?? row.key,
+        row.impression_goal ?? row.impressionGoal ?? row.goal ?? row.total_impressions ?? row.totalImpressions
+      );
+    }
+    return out;
+  }
+
+  if (typeof rawValue === 'object') {
+    for (const [key, goal] of Object.entries(rawValue)) {
+      addGoal(key, goal);
+    }
+  }
+  return out;
 }
 
 function isAddedValuePrefixed(value) {
@@ -348,6 +401,63 @@ function distributeImpressionsByKeywordInventory(totalImpressions, groups) {
   return { groupSplits, keywordRows, totalInventory };
 }
 
+function allocateImpressionsByCampaignTypeGoals(groups, goalsByType = {}, mode = 'keyword_inventory_proportional') {
+  if (!Array.isArray(groups) || groups.length === 0) {
+    return { splits: [], summaries: [], assignedGroupCount: 0, totalGoals: 0 };
+  }
+  const goals = Object.entries(goalsByType || {}).filter(([, goal]) => toPositiveInt(goal, 0) > 0);
+  if (goals.length === 0) {
+    return { splits: Array.from({ length: groups.length }, () => null), summaries: [], assignedGroupCount: 0, totalGoals: 0 };
+  }
+
+  const splits = Array.from({ length: groups.length }, () => null);
+  const summaries = [];
+  let totalGoals = 0;
+  let assignedGroupCount = 0;
+  const seenGroupIndices = new Set();
+
+  for (const [goalKey, goalRaw] of goals) {
+    const goal = toPositiveInt(goalRaw, 0);
+    if (goal <= 0) continue;
+    const key = normalizeCampaignTypeGoalKey(goalKey);
+    const matching = groups
+      .map((group, idx) => ({ group, idx }))
+      .filter(({ group }) => normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE) === key);
+
+    if (matching.length === 0) {
+      throw new Error(`impression_goals_by_campaign_type includes "${goalKey}" but no ad_groups matched campaign_type "${key}"`);
+    }
+
+    let localSplits = [];
+    let totalInventory = 0;
+    if (mode === 'even') {
+      localSplits = distributeImpressionsEvenly(goal, matching.length);
+    } else {
+      const proportional = distributeImpressionsByKeywordInventory(goal, matching.map((x) => x.group));
+      localSplits = proportional.groupSplits;
+      totalInventory = proportional.totalInventory;
+    }
+    if (localSplits.some((n) => n <= 0)) {
+      throw new Error(
+        `impression goal (${goal}) for campaign_type="${key}" is too small for ${matching.length} matching ad groups; `
+        + 'each group must receive at least 1 impression.'
+      );
+    }
+
+    matching.forEach((entry, localIdx) => {
+      splits[entry.idx] = localSplits[localIdx];
+      if (!seenGroupIndices.has(entry.idx)) {
+        seenGroupIndices.add(entry.idx);
+        assignedGroupCount += 1;
+      }
+    });
+    totalGoals += goal;
+    summaries.push({ key, goal, groupCount: matching.length, totalInventory, splits: localSplits });
+  }
+
+  return { splits, summaries, assignedGroupCount, totalGoals };
+}
+
 function distributeImpressionsEvenly(totalImpressions, groupCount) {
   if (!Number.isFinite(totalImpressions) || totalImpressions <= 0 || groupCount <= 0) return [];
   const total = Math.floor(totalImpressions);
@@ -479,6 +589,15 @@ async function applyCampaignOverrides() {
     || IMPRESSION_ALLOCATION_MODE,
     'even'
   );
+  IMPRESSION_GOALS_BY_CAMPAIGN_TYPE = parseImpressionGoalsByCampaignType(
+    reservation.impression_goals_by_campaign_type
+    || reservation.impression_goals_by_type
+    || reservation.impression_goals
+    || parsed.impression_goals_by_campaign_type
+    || parsed.impression_goals_by_type
+    || parsed.impression_goals
+    || {}
+  );
   CPM_PER_GROUP = toNonNegativeNumber(
     reservation.cpm_per_group ?? reservation.cpm ?? parsed.cpm_per_group ?? parsed.cpm,
     CPM_PER_GROUP
@@ -506,9 +625,56 @@ async function applyCampaignOverrides() {
     campaignType: normalizeCampaignType(g.campaignType, DEFAULT_CAMPAIGN_TYPE)
   }));
 
-  if (TOTAL_IMPRESSIONS > 0 && AD_GROUPS.length > 0) {
+  const hasCampaignTypeGoals = Object.keys(IMPRESSION_GOALS_BY_CAMPAIGN_TYPE).length > 0;
+  if (hasCampaignTypeGoals && AD_GROUPS.length > 0) {
+    const modeForTypeGoals = IMPRESSION_ALLOCATION_MODE === 'even'
+      ? 'even'
+      : 'keyword_inventory_proportional';
+    const allocation = allocateImpressionsByCampaignTypeGoals(
+      AD_GROUPS,
+      IMPRESSION_GOALS_BY_CAMPAIGN_TYPE,
+      modeForTypeGoals
+    );
+    AD_GROUPS = AD_GROUPS.map((g, idx) => (
+      allocation.splits[idx] == null
+        ? g
+        : { ...g, reservedImpressions: allocation.splits[idx] }
+    ));
+
+    for (const summary of allocation.summaries) {
+      if (modeForTypeGoals === 'even') {
+        console.log(
+          `Using impression_goals_by_campaign_type for campaign_type=${summary.key}: goal=${summary.goal}, `
+          + `groups=${summary.groupCount}, even splits=${summary.splits.join(', ')}`
+        );
+      } else {
+        console.log(
+          `Using impression_goals_by_campaign_type for campaign_type=${summary.key}: goal=${summary.goal}, `
+          + `groups=${summary.groupCount}, total keyword inventory=${summary.totalInventory}, splits=${summary.splits.join(', ')}`
+        );
+      }
+    }
+    if (allocation.assignedGroupCount < AD_GROUPS.length) {
+      const unassigned = AD_GROUPS.filter((_, idx) => allocation.splits[idx] == null).map((g) => g.name).join(', ');
+      console.warn(
+        `impression_goals_by_campaign_type did not include goals for ${AD_GROUPS.length - allocation.assignedGroupCount} `
+        + `ad group(s); keeping existing reserved_impressions for: ${unassigned}`
+      );
+    }
+    if (TOTAL_IMPRESSIONS > 0 && allocation.totalGoals !== TOTAL_IMPRESSIONS) {
+      console.warn(
+        `total_impressions (${TOTAL_IMPRESSIONS}) does not equal sum(impression_goals_by_campaign_type) `
+        + `(${allocation.totalGoals}); campaign-type goals were applied as source of truth.`
+      );
+    }
+  }
+
+  if (!hasCampaignTypeGoals && TOTAL_IMPRESSIONS > 0 && AD_GROUPS.length > 0) {
     let splits = [];
-    if (IMPRESSION_ALLOCATION_MODE === 'keyword_inventory_proportional') {
+    if (
+      IMPRESSION_ALLOCATION_MODE === 'keyword_inventory_proportional'
+      || IMPRESSION_ALLOCATION_MODE === 'keyword_inventory_proportional_by_campaign_type'
+    ) {
       const proportional = distributeImpressionsByKeywordInventory(TOTAL_IMPRESSIONS, AD_GROUPS);
       splits = proportional.groupSplits;
       console.log(

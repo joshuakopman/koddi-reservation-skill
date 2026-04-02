@@ -179,52 +179,43 @@ Invoke the skill by starting your prompt with `$koddi-reservation-campaign-build
 
 Copy/paste prompt examples non-technical users can run in Codex:
 
-### Example Prompt 1: Mixed Campaign Types (Search + Trending + Banner) W/ Evenly Distributed Impression Goal
+### Example Prompt 1: Typical Rotational Setup (Separate Search + Trending Impression Pools)
 
 ```text
-Please generate a valid campaign JSON file for the Koddi reservation automation based on the following requirements, then execute the Koddi Reservation Builder skill based on that JSON, and leave the browser open at the end.
+$koddi-reservation-campaign-builder
+
+Please generate a valid campaign JSON for the Koddi reservation automation, then run the skill using that JSON and leave the browser open at the end.
 
 Requirements:
-- Reservation name: josh test 12
-- Start date: 04/01/2026
-- End date: 06/30/2026
-- Advertiser name: optional in your JSON input. Koddi UI still requires an advertiser; if you omit it, the automation selects the first advertiser option in the dropdown.
-- Total impressions: 4,545,455 (split evenly across all ad groups)
-- CPM per ad group: 10
-- For every ad group:
-  - creative_id is auto-derived by parsing the ID at the end of `gif_url` (for example `...-1iHDjCqdmDJOqZFYAX` -> `1iHDjCqdmDJOqZFYAX`)
-  - creative_friendly_name = ad group name
-  - click_url is optional; include only when you want it set
-  - cta_text is optional; include only when you want it set
-  - cta_url is optional (if omitted, automation defaults to `gif_url`)
-  - carousel_gifs = [gif_url]
+- Reservation name: Old El Paso Search + Trending + Takeovers 2026-04-21 to 2026-05-05
+- Start date: 04/21/2026
+- End date: 05/05/2026
+- Advertiser name: Demo Advertiser
+- impression_allocation_mode: keyword_inventory_proportional_by_campaign_type
+- impression_goals_by_campaign_type:
+  - search: 2,272,727
+  - trending: 3,125,000
+- This means:
+  - all Search Rotational ad groups are allocated from the Search pool only
+  - all Trending Rotational ad groups are allocated from the Trending pool only
+  - each pool is proportional to keyword inventory inside that pool
+- Keep non-rotational takeovers as explicit fixed values:
+  - Trending Takeover reserved_impressions: 9,000,000
+  - AV Sticker Takeover reserved_impressions: 5,000,000
+- For rotational groups, include keyword inventory using objects:
+  - { "term": "...", "available_inventory": ... }
+- For every group unless overridden:
   - countries = ["United States"]
   - positions = ["Position 1"]
-  - ad_contexts = ["*"] (means select all Ad Context checkboxes)
-  - if campaign_type is search or trending: set ad_types = ["API: GIF"] (or a provided ad type override)
-  - if campaign_type is banner: ad_types should be Banner (script forces this automatically)
-  - if campaign_type is search: keywords can be [] to randomize, or provided explicitly
-  - if campaign_type is trending: keywords should be omitted (script forces ["# giphytrending #"])
-  - if campaign_type is banner: do not include keywords (banner skips search_query targeting)
+  - ad_types = ["API: GIF"] (banner groups still force Banner)
+  - ad_contexts = ["*"]
+  - carousel_gifs = [gif_url]
+  - cta_url = gif_url
 
-Ad groups (5):
-1) one of those things - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
-   campaign_type: search
-   ad_types: ["API: GIF"]
-   click_url: https://www.amcplus.com/pages/prestige/
-   cta_text: Watch Now
-2) who's in charge? - https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
-   campaign_type: search
-   ad_types: ["API: GIF"]
-3) sus - https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c
-   campaign_type: trending
-   ad_types: ["API: GIF"]
-4) so proud - https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M
-   campaign_type: banner
-   ad_types: ["Banner"]
-5) oh shit - https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5
-   campaign_type: search
-   ad_types: ["API: GIF"]
+Ad group structure to build:
+- Search Rotational groups (campaign_type: search): use keyword inventory and auto-compute reserved_impressions from the search pool.
+- Trending Rotational groups (campaign_type: trending): use keyword inventory and auto-compute reserved_impressions from the trending pool.
+- Trending Takeover + AV Sticker Takeover groups: set explicit reserved_impressions as fixed values, do not include them in impression_goals_by_campaign_type pools.
 
 ```
 
