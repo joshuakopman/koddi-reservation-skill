@@ -1,6 +1,6 @@
 ---
 name: koddi-reservation-campaign-builder
-description: Create Koddi reservation campaigns (Targeted Reservation + Multiple Ad Group Test Flow) from structured campaign input and run the Playwright automation end-to-end. Use when Ad Ops needs to build reservations/ad groups quickly, set per-group impressions, populate asset fields, select advertiser, and submit with verification/diagnostics.
+description: Create Koddi reservation campaigns (Targeted Reservation + Targeted Reservations configuration) from structured campaign input and run the Playwright automation end-to-end. Use when Ad Ops needs to build reservations/ad groups quickly, set per-group impressions, populate asset fields, select advertiser, and submit with verification/diagnostics.
 ---
 
 # Koddi Reservation Campaign Builder
@@ -99,7 +99,7 @@ Prompting tip for proportional guarantees:
 The automation:
 
 - Opens Koddi reservation flow directly at `/reservations/reserve`
-- Selects `Targeted Reservation` and `Multiple Ad Group Test Flow`
+- Selects `Targeted Reservation` and the `Targeted Reservations` configuration (with fallback for older config labels)
 - Selects advertiser from `Select an advertiser`
 - Fills reservation name/dates
 - For proportional allocation modes, conditionally resolves keyword inventory:

@@ -98,6 +98,15 @@ const ADOPS_PRODUCT_RULES = {
     defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
     defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
   },
+  video: {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: false,
+    forceAdTypes: ['Video'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  },
   carousel: {
     defaultCampaignType: 'banner',
     requiresSearchQuery: false,
@@ -134,7 +143,43 @@ const ADOPS_PRODUCT_RULES = {
     defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
     defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
   },
+  'xl banner': {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: false,
+    forceAdTypes: ['Banner'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  },
+  banner: {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: false,
+    forceAdTypes: ['Banner'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  },
+  banners: {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: false,
+    forceAdTypes: ['Banner'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  },
   'link out gif': {
+    defaultCampaignType: 'banner',
+    requiresSearchQuery: false,
+    forceTrendingKeywords: false,
+    requiresPosition: true,
+    forceAdTypes: ['Clickable'],
+    defaultAdContexts: DEFAULT_APP_SURFACE_AD_CONTEXTS,
+    defaultOnOViewTypes: DEFAULT_ONO_VIEW_TYPES
+  },
+  clickable: {
     defaultCampaignType: 'banner',
     requiresSearchQuery: false,
     forceTrendingKeywords: false,
@@ -203,6 +248,8 @@ function toPositiveInt(value, fallback = 0) {
 function normalizeCampaignType(value, fallback = DEFAULT_CAMPAIGN_TYPE) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return fallback;
+  const productRule = getAdOpsProductRule(raw);
+  if (productRule?.defaultCampaignType) return productRule.defaultCampaignType;
   if (raw === 'search') return 'search';
   if (raw === 'trending') return 'trending';
   if (raw === 'banner' || raw === 'banners') return 'banner';
@@ -221,11 +268,30 @@ function normalizeAdOpsRuleKey(value) {
 function getAdOpsProductRule(value) {
   const key = normalizeAdOpsRuleKey(value);
   if (!key) return null;
-  return ADOPS_PRODUCT_RULES[key] || null;
+  const candidates = new Set([key]);
+
+  const maybeAdd = (variant) => {
+    const normalized = normalizeAdOpsRuleKey(variant);
+    if (normalized) candidates.add(normalized);
+  };
+
+  if (key.startsWith('av ')) maybeAdd(key.slice(3));
+  if (key.startsWith('added value ')) maybeAdd(key.slice('added value '.length));
+
+  // Common spreadsheet pluralization variants.
+  for (const candidate of Array.from(candidates)) {
+    maybeAdd(candidate.replace(/\bgifs\b/g, 'gif'));
+    maybeAdd(candidate.replace(/\bbanners\b/g, 'banner'));
+  }
+
+  for (const candidate of candidates) {
+    if (ADOPS_PRODUCT_RULES[candidate]) return ADOPS_PRODUCT_RULES[candidate];
+  }
+  return null;
 }
 
 function resolveAdGroupShapeDefaults({ adOpsSpreadsheetName = '', campaignType = DEFAULT_CAMPAIGN_TYPE } = {}) {
-  const rule = getAdOpsProductRule(adOpsSpreadsheetName);
+  const rule = getAdOpsProductRule(adOpsSpreadsheetName) || getAdOpsProductRule(campaignType);
   const defaultCampaignType = normalizeCampaignType(
     rule?.defaultCampaignType || campaignType,
     DEFAULT_CAMPAIGN_TYPE
@@ -241,7 +307,7 @@ function resolveAdGroupShapeDefaults({ adOpsSpreadsheetName = '', campaignType =
     : defaultCampaignType !== 'banner';
   const defaultAdTypes = Array.isArray(rule?.defaultAdTypes) && rule.defaultAdTypes.length > 0
     ? [...rule.defaultAdTypes]
-    : (defaultCampaignType === 'banner' ? [...DEFAULT_BANNER_AD_TYPES] : [...DEFAULT_AD_TYPES]);
+    : [...DEFAULT_AD_TYPES];
   const forceAdTypes = Array.isArray(rule?.forceAdTypes) && rule.forceAdTypes.length > 0
     ? [...rule.forceAdTypes]
     : [];
@@ -1772,9 +1838,21 @@ async function gotoAdGroupsStepFromReservations(page) {
 
   let reachedDetails = false;
   for (let attempt = 0; attempt < 3 && !reachedDetails; attempt += 1) {
-    await clickFirst(page, ['text=Targeted Reservation']).catch(() => null);
+    await clickFirst(page, [
+      '[data-test^="workflow-experience-"][data-test$="--radio"]:has-text("Targeted Reservation")',
+      '[data-test^="workflow-experience-"][data-test$="--container"]:has-text("Targeted Reservation")',
+      'label:has-text("Targeted Reservation")',
+      'text=Targeted Reservation'
+    ]).catch(() => null);
     await page.waitForTimeout(1000);
-    await clickFirst(page, ['text=Multiple Ad Group Test Flow']).catch(() => null);
+    await clickFirst(page, [
+      '[data-test^="workflow-config-"][data-test$="--radio"]:has-text("Targeted Reservations")',
+      '[data-test^="workflow-config-"][data-test$="--container"]:has-text("Targeted Reservations")',
+      '[data-test^="workflow-config-"][data-test$="--label"]:has-text("Targeted Reservations")',
+      'label:has-text("Targeted Reservations")',
+      'text=Targeted Reservations',
+      'text=Multiple Ad Group Test Flow'
+    ]).catch(() => null);
     await page.waitForTimeout(1000);
     await clickFirst(page, ['[data-test="campaign-action-row--next"]', 'button:has-text("Next")'], 3500).catch(() => null);
     await page.waitForTimeout(900);
@@ -2939,18 +3017,23 @@ async function createOneAdGroup(page, group, idx) {
   const countries = Array.isArray(group.countries) && group.countries.length ? group.countries : DEFAULT_COUNTRIES;
   const positions = Array.isArray(group.positions) && group.positions.length ? group.positions : DEFAULT_POSITIONS;
   const adTypesRaw = Array.isArray(group.adTypes) && group.adTypes.length ? group.adTypes : DEFAULT_AD_TYPES;
+  const forcedAdTypes = Array.isArray(group.forceAdTypes) && group.forceAdTypes.length ? group.forceAdTypes : [];
   const adContexts = Array.isArray(group.adContexts) && group.adContexts.length ? group.adContexts : DEFAULT_AD_CONTEXTS;
   const onoViewTypesRaw = Array.isArray(group.onoViewTypes) && group.onoViewTypes.length ? group.onoViewTypes : [];
   const onoViewTypes = resolvedCampaignType === 'banner'
     ? (onoViewTypesRaw.length ? onoViewTypesRaw : DEFAULT_ONO_VIEW_TYPES)
     : onoViewTypesRaw;
-  let adTypes = adTypesRaw;
+  let adTypes = forcedAdTypes.length > 0 ? forcedAdTypes : adTypesRaw;
   const norm = (v) => String(v || '').toLowerCase().trim();
-  if (resolvedCampaignType === 'banner') {
-    if (adTypesRaw.length && !adTypesRaw.some((v) => norm(v) === 'banner')) {
-      console.warn(`Campaign type "banner" overrides ad_types for ${group.name}; forcing ad type ${DEFAULT_BANNER_AD_TYPES.join(', ')}`);
+  if (forcedAdTypes.length > 0) {
+    if (
+      adTypesRaw.length > 0
+      && !adTypesRaw.every((value) => forcedAdTypes.some((forcedValue) => norm(forcedValue) === norm(value)))
+    ) {
+      console.warn(
+        `Product-specific ad type override for ${group.name}; forcing ad type ${forcedAdTypes.join(', ')}`
+      );
     }
-    adTypes = DEFAULT_BANNER_AD_TYPES;
   } else {
     const countrySet = new Set(countries.map(norm));
     const adTypeLooksLikeCountry = adTypesRaw.some((v) => countrySet.has(norm(v)));
