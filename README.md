@@ -399,8 +399,4 @@ Use defaults unless specified:
 - ad_contexts: ["*"]
 - cta_url = gif_url
 - carousel_gifs = [gif_url]
-
-Expected computed reserved_impressions:
-- GIF 1: 4,895,691
-- GIF 2: 104,309
 ```
