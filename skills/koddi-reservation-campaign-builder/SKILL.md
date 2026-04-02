@@ -26,10 +26,13 @@ Use this shape:
 - `reservation.start_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.end_date` (`YYYY-MM-DD` or `MM/DD/YYYY`)
 - `reservation.advertiser_name` (optional in JSON input; if provided, script attempts to select that exact advertiser label. Advertiser is still required by Koddi UI, so if omitted or not found the script falls back to the first advertiser option)
-- `reservation.total_impressions` (recommended/primary; split mode controlled by `reservation.impression_allocation_mode`)
-- `reservation.impression_allocation_mode` (optional; default `even`)
-  - `even`
-  - `keyword_inventory_proportional`
+- `reservation.impression_allocation_mode` (optional; default `keyword_inventory_proportional_by_campaign_type`)
+  - `keyword_inventory_proportional_by_campaign_type` (recommended/default)
+  - `keyword_inventory_proportional` (legacy single-pool mode)
+  - `even` (legacy single-pool mode)
+- `reservation.impression_goals_by_campaign_type` (recommended/default with mode above)
+- `reservation.impression_goals_by_type` (alias of `impression_goals_by_campaign_type`)
+- `reservation.total_impressions` (optional; used for legacy single-pool modes)
 - `reservation.reserved_impressions_per_group` (default fallback for each ad group)
 - `reservation.cpm_per_group` (optional CPM fallback; defaults to `10`)
 - `ad_groups[]` with at minimum:
@@ -65,8 +68,9 @@ Campaign type behavior:
 
 Impression precedence:
 
-- `reservation.total_impressions` + `reservation.impression_allocation_mode=keyword_inventory_proportional` (if present, split by keyword inventory share and sum to ad-group totals)
-- `reservation.total_impressions` (if present and mode is omitted/`even`, split evenly across all groups)
+- `reservation.impression_goals_by_campaign_type` (or `impression_goals_by_type`) + `reservation.impression_allocation_mode=keyword_inventory_proportional_by_campaign_type` (split each campaign type pool by keyword inventory share and sum to ad-group totals)
+- `reservation.total_impressions` + legacy `reservation.impression_allocation_mode=keyword_inventory_proportional` (single-pool proportional split)
+- `reservation.total_impressions` + legacy `reservation.impression_allocation_mode=even` (single-pool even split)
 - `ad_groups[].reserved_impressions`
 - `reservation.reserved_impressions_per_group`
 
@@ -79,7 +83,7 @@ CPM precedence:
 
 Prompting tip for proportional guarantees:
 
-- Say: "Set `reservation.total_impressions`, set `reservation.impression_allocation_mode` to `keyword_inventory_proportional`, and provide each ad group's keywords as `{term, available_inventory}` so reserved impressions are auto-computed per ad group."
+- Say: "Set `reservation.impression_allocation_mode` to `keyword_inventory_proportional_by_campaign_type`, provide `reservation.impression_goals_by_campaign_type` (for example Search and Trending goals), and provide each rotational ad group's keywords as `{term, available_inventory}` so reserved impressions are auto-computed within each campaign-type pool."
 
 ## Behavior
 

@@ -22,7 +22,7 @@ let START_DATE = process.env.START_DATE || '04/01/2026';
 let END_DATE = process.env.END_DATE || '06/30/2026';
 let ADVERTISER_NAME = process.env.ADVERTISER_NAME || '';
 let TOTAL_IMPRESSIONS = Number(process.env.TOTAL_IMPRESSIONS || 0);
-let IMPRESSION_ALLOCATION_MODE = String(process.env.IMPRESSION_ALLOCATION_MODE || 'even');
+let IMPRESSION_ALLOCATION_MODE = String(process.env.IMPRESSION_ALLOCATION_MODE || 'keyword_inventory_proportional_by_campaign_type');
 let IMPRESSION_GOALS_BY_CAMPAIGN_TYPE = {};
 let CPM_PER_GROUP = Number.isFinite(Number(process.env.CPM_PER_GROUP)) && Number(process.env.CPM_PER_GROUP) >= 0
   ? Number(process.env.CPM_PER_GROUP)
@@ -111,10 +111,10 @@ function normalizeCampaignType(value, fallback = DEFAULT_CAMPAIGN_TYPE) {
   return fallback;
 }
 
-function normalizeImpressionAllocationMode(value, fallback = 'even') {
+function normalizeImpressionAllocationMode(value, fallback = 'keyword_inventory_proportional_by_campaign_type') {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return fallback;
-  if (raw === 'even') return 'even';
+  if (raw === 'even') return 'legacy_even';
   if (
     raw === 'keyword_inventory_proportional_by_campaign_type'
     || raw === 'keyword-inventory-proportional-by-campaign-type'
@@ -134,7 +134,7 @@ function normalizeImpressionAllocationMode(value, fallback = 'even') {
     || raw === 'keyword-inventory'
     || raw === 'proportional'
   ) {
-    return 'keyword_inventory_proportional';
+    return 'legacy_keyword_inventory_proportional';
   }
   return fallback;
 }
@@ -587,7 +587,7 @@ async function applyCampaignOverrides() {
     || parsed.impression_split_mode
     || parsed.impression_split
     || IMPRESSION_ALLOCATION_MODE,
-    'even'
+    'keyword_inventory_proportional_by_campaign_type'
   );
   IMPRESSION_GOALS_BY_CAMPAIGN_TYPE = parseImpressionGoalsByCampaignType(
     reservation.impression_goals_by_campaign_type
@@ -627,7 +627,7 @@ async function applyCampaignOverrides() {
 
   const hasCampaignTypeGoals = Object.keys(IMPRESSION_GOALS_BY_CAMPAIGN_TYPE).length > 0;
   if (hasCampaignTypeGoals && AD_GROUPS.length > 0) {
-    const modeForTypeGoals = IMPRESSION_ALLOCATION_MODE === 'even'
+    const modeForTypeGoals = IMPRESSION_ALLOCATION_MODE === 'legacy_even'
       ? 'even'
       : 'keyword_inventory_proportional';
     const allocation = allocateImpressionsByCampaignTypeGoals(
@@ -670,15 +670,18 @@ async function applyCampaignOverrides() {
   }
 
   if (!hasCampaignTypeGoals && TOTAL_IMPRESSIONS > 0 && AD_GROUPS.length > 0) {
+    if (IMPRESSION_ALLOCATION_MODE === 'keyword_inventory_proportional_by_campaign_type') {
+      throw new Error(
+        'impression_allocation_mode=keyword_inventory_proportional_by_campaign_type requires '
+        + 'reservation.impression_goals_by_campaign_type (or impression_goals_by_type).'
+      );
+    }
     let splits = [];
-    if (
-      IMPRESSION_ALLOCATION_MODE === 'keyword_inventory_proportional'
-      || IMPRESSION_ALLOCATION_MODE === 'keyword_inventory_proportional_by_campaign_type'
-    ) {
+    if (IMPRESSION_ALLOCATION_MODE === 'legacy_keyword_inventory_proportional') {
       const proportional = distributeImpressionsByKeywordInventory(TOTAL_IMPRESSIONS, AD_GROUPS);
       splits = proportional.groupSplits;
       console.log(
-        `Using total_impressions=${TOTAL_IMPRESSIONS} with impression_allocation_mode=keyword_inventory_proportional`
+        `Using total_impressions=${TOTAL_IMPRESSIONS} with legacy single-pool allocation mode=keyword_inventory_proportional`
         + ` (total keyword inventory=${proportional.totalInventory}); splits: ${splits.join(', ')}`
       );
     } else {

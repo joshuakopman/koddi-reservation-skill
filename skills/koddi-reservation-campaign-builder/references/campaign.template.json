@@ -6,7 +6,7 @@
     "advertiser_name": "REQUIRED_EXACT_UI_ADVERTISER_LABEL",
     "campaign_type": "search",
     "total_impressions": 757576,
-    "impression_allocation_mode": "even",
+    "impression_allocation_mode": "keyword_inventory_proportional",
     "cpm_per_group": 10
   },
   "ad_groups": [

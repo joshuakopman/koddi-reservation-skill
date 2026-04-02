@@ -70,10 +70,15 @@ Top-level keys:
 - `start_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `end_date` (string, required, `YYYY-MM-DD` or `MM/DD/YYYY`)
 - `advertiser_name` (string, optional in JSON input; if provided, script attempts to select that exact advertiser label. Advertiser is still required by Koddi UI, so if omitted or not found the script falls back to the first advertiser option)
-- `total_impressions` (number, recommended/primary; split mode controlled by `impression_allocation_mode`)
-- `impression_allocation_mode` (string, optional; default `even`)
-  - `even`: splits `total_impressions` evenly across all ad groups (remainder goes to earliest groups)
-  - `keyword_inventory_proportional`: allocates from each keyword's inventory share, then sums to ad-group totals
+- `impression_allocation_mode` (string, optional; default `keyword_inventory_proportional_by_campaign_type`)
+  - `keyword_inventory_proportional_by_campaign_type` (recommended/default): allocates each campaign type from its own goal pool using keyword inventory
+  - `keyword_inventory_proportional` (legacy single-pool mode): allocates one `total_impressions` pool across all groups by keyword inventory
+  - `even` (legacy single-pool mode): splits one `total_impressions` pool evenly across all groups
+- `impression_goals_by_campaign_type` (object or array, recommended/default with the mode above)
+  - object example: `{ "search": 2272727, "trending": 3125000 }`
+  - array example: `[{"campaign_type":"search","impression_goal":2272727},{"campaign_type":"trending","impression_goal":3125000}]`
+- `impression_goals_by_type` (alias of `impression_goals_by_campaign_type`)
+- `total_impressions` (number, optional; used for legacy single-pool modes)
 - `reserved_impressions_per_group` (number, recommended fallback)
 - `cpm_per_group` (number, optional; defaults to `10`)
 
@@ -117,12 +122,15 @@ Campaign type behavior:
 
 Impression precedence:
 
-- If `reservation.total_impressions` is set and `reservation.impression_allocation_mode = keyword_inventory_proportional`, the script computes per-keyword guarantees from inventory share and then rolls up to each ad group.
-- If `reservation.total_impressions` is set and split mode is omitted (or set to `even`), the script splits across all ad groups evenly (remainder distributed from the first group onward).
+- If `reservation.impression_goals_by_campaign_type` (or `impression_goals_by_type`) is set, each campaign type is allocated from its own goal pool.
+  - default mode `keyword_inventory_proportional_by_campaign_type` uses keyword inventory inside each campaign type pool.
+  - legacy `even` mode applies even split inside each campaign type pool.
+- Otherwise, if `reservation.total_impressions` is set with legacy `keyword_inventory_proportional`, the script computes single-pool per-keyword guarantees from inventory share and rolls up to each ad group.
+- Otherwise, if `reservation.total_impressions` is set with legacy `even`, the script splits across all ad groups evenly (remainder distributed from the first group onward).
 - Otherwise it uses each ad group's `reserved_impressions` if present.
 - Otherwise it falls back to `reservation.reserved_impressions_per_group`.
 
-Keyword inventory proportional formula:
+Keyword inventory proportional formula (used in both single-pool and by-campaign-type pools):
 
 - `keyword_guarantee = ROUND((keyword_available_inventory / total_keyword_inventory) * total_impressions)`
 - `ad_group_reserved_impressions = SUM(keyword_guarantee in that group)`
@@ -216,6 +224,26 @@ Ad group structure to build:
 - Search Rotational groups (campaign_type: search): use keyword inventory and auto-compute reserved_impressions from the search pool.
 - Trending Rotational groups (campaign_type: trending): use keyword inventory and auto-compute reserved_impressions from the trending pool.
 - Trending Takeover + AV Sticker Takeover groups: set explicit reserved_impressions as fixed values, do not include them in impression_goals_by_campaign_type pools.
+
+Include concrete keyword inventory blocks like:
+
+Ad group 1:
+- name: GIF 1
+- campaign_type: search
+- gif_url: https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
+- keywords:
+  - { "term": "happy", "available_inventory": 5518193 }
+  - { "term": "yay", "available_inventory": 1734000 }
+  - { "term": "omg", "available_inventory": 844000 }
+
+Ad group 2:
+- name: GIF 2
+- campaign_type: search
+- gif_url: https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
+- keywords:
+  - { "term": "march madness", "available_inventory": 122000 }
+  - { "term": "basketball", "available_inventory": 1500 }
+  - { "term": "score", "available_inventory": 49000 }
 
 ```
 
