@@ -59,6 +59,15 @@ Optional ad group fields:
   - For `keyword_inventory_proportional` mode, keywords can be objects like `{ "term": "happy", "available_inventory": 5518193 }`
 - `keyword_inventory` / `keyword_inventories` (optional map or array; alternate place to provide per-keyword inventory for proportional allocation)
 
+Inventory lookup behavior for proportional modes:
+
+- If keyword inventory is already provided (`keywords` objects with `available_inventory`, or `keyword_inventory` / `keyword_inventories`), the script skips Bouncer lookup and uses that inventory directly.
+- If a `search` ad group has term-only keywords (no inventory provided), the script opens Bouncer Inventory Explorer, captures inventory per term, and then runs the same proportional reserved-impression calculations.
+- Impression calculations always run; Bouncer lookup is only a fallback source for missing inventory.
+- Startup window behavior mirrors this:
+  - term-only search keywords => open Koddi + Bouncer windows at startup
+  - keywords with `available_inventory` => open Koddi window only
+
 Campaign type behavior:
 
 - `search` (default): keyword targeting behaves normally, and random keyword fallback excludes `# giphytrending #`.
@@ -93,6 +102,9 @@ The automation:
 - Selects `Targeted Reservation` and `Multiple Ad Group Test Flow`
 - Selects advertiser from `Select an advertiser`
 - Fills reservation name/dates
+- For proportional allocation modes, conditionally resolves keyword inventory:
+  - uses provided inventory directly when present
+  - otherwise looks up missing term inventory in Bouncer for search groups
 - Creates targeting as AND groups. For `search`/`trending`: `search_query` then country, position, ad type, ad context. For `banner`: skips `search_query`, forces ad type `Banner`, and adds `OnO View Type`
 - Clicks final `Submit`
 - Verifies submit success (success modal/navigation/toast checks)

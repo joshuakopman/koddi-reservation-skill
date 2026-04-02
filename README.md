@@ -112,6 +112,15 @@ Each `ad_groups[]` item:
   - Alternative way to provide inventory for proportional allocation; example map:
     - `{ "happy": 5518193, "yay": 1734000 }`
 
+Keyword inventory fallback behavior:
+
+- If inventory is already provided (`keywords` objects with `available_inventory`, or `keyword_inventory` / `keyword_inventories`), the script uses it directly and skips Bouncer lookup.
+- If a `search` ad group only has keyword terms (no inventory), and the selected impression allocation mode requires keyword inventory, the script looks up term inventory in Bouncer Inventory Explorer and then performs the same reserved-impression calculations.
+- Impression allocation math always runs; only the inventory source changes.
+- Startup window behavior follows the same rule:
+  - if any search group has term-only keywords, startup opens both Koddi and Bouncer windows
+  - if keyword inventory objects are already present, startup opens only Koddi
+
 Campaign type behavior:
 
 - `search`: uses existing keyword behavior + country/position/ad type/ad context targeting groups.
@@ -135,6 +144,13 @@ Keyword inventory proportional formula (used in both single-pool and by-campaign
 - `keyword_guarantee = ROUND((keyword_available_inventory / total_keyword_inventory) * total_impressions)`
 - `ad_group_reserved_impressions = SUM(keyword_guarantee in that group)`
 - If rounding drift occurs, the script auto-reconciles so final ad-group totals still sum exactly to `total_impressions`.
+
+Bouncer lookup runtime controls (optional):
+
+- `BOUNCER_LOOKUP_ENABLED` (`1`/`0`, default `1`): enables/disables automatic fallback lookup for missing keyword inventory.
+- `BOUNCER_PROFILE_DIR` (default `<PLAYWRIGHT_PROFILE_DIR>-bouncer`): Playwright profile used for Bouncer login/session.
+- `BOUNCER_INVENTORY_EXPLORER_URL` (default `https://bouncer.giphy.tech/website/inventory-explorer/`)
+- `BOUNCER_LOGIN_WAIT_MS` (default `1200000`): max wait for manual Bouncer login before failing.
 
 CPM precedence:
 
@@ -212,6 +228,7 @@ Requirements:
   - AV Sticker Takeover reserved_impressions: 5,000,000
 - For rotational groups, include keyword inventory using objects:
   - { "term": "...", "available_inventory": ... }
+  - If only terms are provided (no `available_inventory`), run Bouncer lookup first and then compute reserved impressions from those looked-up inventories.
 - For every group unless overridden:
   - countries = ["United States"]
   - positions = ["Position 1"]

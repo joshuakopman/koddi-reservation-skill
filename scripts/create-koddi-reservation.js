@@ -46,6 +46,10 @@ const DEFAULT_BANNER_AD_TYPES = ['Banner'];
 const DEFAULT_POSITIONS = ['Position 1'];
 const DEFAULT_AD_CONTEXTS = ['*'];
 const DEFAULT_ONO_VIEW_TYPES = ['Details Page', 'Home Page', 'Search Page'];
+const BOUNCER_INVENTORY_EXPLORER_URL = process.env.BOUNCER_INVENTORY_EXPLORER_URL || 'https://bouncer.giphy.tech/website/inventory-explorer/';
+const BOUNCER_LOOKUP_ENABLED = process.env.BOUNCER_LOOKUP_ENABLED !== '0';
+const BOUNCER_PROFILE_DIR = process.env.BOUNCER_PROFILE_DIR || `${PROFILE_DIR}-bouncer`;
+const BOUNCER_LOGIN_WAIT_MS = Number(process.env.BOUNCER_LOGIN_WAIT_MS || 20 * 60 * 1000);
 
 const DEFAULT_AD_GROUPS = [
   {
@@ -217,6 +221,8 @@ function parseKeywordTerm(rawValue) {
 }
 
 function parseKeywordInventoryValue(rawValue) {
+  if (rawValue === null || rawValue === undefined) return null;
+  if (typeof rawValue === 'string' && rawValue.trim() === '') return null;
   const n = Number(rawValue);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.floor(n);
@@ -560,7 +566,436 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
   };
 }
 
-async function applyCampaignOverrides() {
+function toMonthName(monthNumber) {
+  const idx = Number(monthNumber) - 1;
+  const names = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+  return names[idx] || '';
+}
+
+function toOrdinalSuffix(dayNum) {
+  const day = Number(dayNum);
+  if (day % 100 >= 11 && day % 100 <= 13) return 'th';
+  if (day % 10 === 1) return 'st';
+  if (day % 10 === 2) return 'nd';
+  if (day % 10 === 3) return 'rd';
+  return 'th';
+}
+
+function parseUsDateParts(value) {
+  const raw = String(value || '').trim();
+  const mdy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
+  if (!mdy) return null;
+  const month = Number(mdy[1]);
+  const day = Number(mdy[2]);
+  const year = Number(mdy[3]);
+  if (!Number.isFinite(month) || !Number.isFinite(day) || !Number.isFinite(year)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return {
+    month,
+    day,
+    year,
+    monthName: toMonthName(month)
+  };
+}
+
+function toBouncerAriaDateLabel(mdyDate) {
+  const parsed = parseUsDateParts(mdyDate);
+  if (!parsed?.monthName) return '';
+  return `${parsed.monthName} ${parsed.day}${toOrdinalSuffix(parsed.day)}, ${parsed.year}`;
+}
+
+async function clickFirstVisibleLocator(locator) {
+  const count = await locator.count().catch(() => 0);
+  for (let i = 0; i < count; i += 1) {
+    const item = locator.nth(i);
+    const visible = await item.isVisible().catch(() => false);
+    if (!visible) continue;
+    const clicked = await item.click({ force: true }).then(() => true).catch(() => false);
+    if (clicked) return true;
+  }
+  return false;
+}
+
+async function ensureBouncerLoggedIn(page) {
+  const url = page.url();
+  if (!/\/users\/login\//i.test(url)) return;
+  console.log('Bouncer login required. Waiting for Inventory Explorer after login...');
+  await page.waitForURL(/\/website\/inventory-explorer\//i, { timeout: BOUNCER_LOGIN_WAIT_MS });
+}
+
+async function ensureBouncerKeywordsGroupsExpanded(page) {
+  const header = page.locator('div[role="button"][aria-controls]').filter({ hasText: /Keywords & Groups/i }).first();
+  const visible = await header.isVisible().catch(() => false);
+  if (!visible) return;
+  const expanded = await header.getAttribute('aria-expanded').catch(() => 'true');
+  if (expanded === 'false') {
+    await header.click({ force: true }).catch(() => null);
+    await page.waitForTimeout(180);
+  }
+}
+
+async function setBouncerGifs(page) {
+  await clickFirstVisibleLocator(page.locator('button').filter({ hasText: /^\s*GIFs\s*$/i }));
+}
+
+async function setBouncerImpressionGoal(page, value) {
+  const input = page.locator('input[placeholder="0"]').first();
+  await input.waitFor({ state: 'visible', timeout: 20000 });
+  await input.click({ force: true });
+  await input.fill('');
+  await input.type(String(Math.max(1, Math.floor(Number(value) || 0))), { delay: 12 });
+}
+
+async function gotoBouncerMonth(page, monthName, yearNumber) {
+  const targetCaption = `${monthName} ${yearNumber}`;
+  for (let i = 0; i < 18; i += 1) {
+    const visible = await page.locator(`.rdp-caption_label:has-text("${targetCaption}")`).first().isVisible().catch(() => false);
+    if (visible) return true;
+    const moved = await clickFirstVisibleLocator(
+      page.locator('button[aria-label*="next month" i], button[aria-label*="Go to next month" i], .rdp-button_next')
+    );
+    if (!moved) break;
+    await page.waitForTimeout(120);
+  }
+  return false;
+}
+
+async function setBouncerDates(page, startDate, endDate) {
+  const startBtn = page.locator('#start-date-label + button[role="combobox"]').first();
+  const endBtn = page.locator('#end-date-label + button[role="combobox"]').first();
+  const startParts = parseUsDateParts(startDate);
+  const endParts = parseUsDateParts(endDate);
+  if (!startParts || !endParts) return false;
+
+  const startAria = toBouncerAriaDateLabel(startDate);
+  const endAria = toBouncerAriaDateLabel(endDate);
+  if (!startAria || !endAria) return false;
+
+  await startBtn.click({ force: true }).catch(() => null);
+  await page.waitForTimeout(120);
+  await gotoBouncerMonth(page, startParts.monthName, startParts.year);
+  await page.locator(`button[aria-label*="${startAria}"]`).first().click({ force: true }).catch(() => null);
+  await page.keyboard.press('Escape').catch(() => null);
+  await page.waitForTimeout(120);
+
+  await endBtn.click({ force: true }).catch(() => null);
+  await page.waitForTimeout(120);
+  await gotoBouncerMonth(page, endParts.monthName, endParts.year);
+  await page.locator(`button[aria-label*="${endAria}"]`).first().click({ force: true }).catch(() => null);
+  await page.keyboard.press('Escape').catch(() => null);
+  await page.waitForTimeout(120);
+
+  return true;
+}
+
+async function deleteBouncerGroupByTerm(page, term) {
+  const pill = page.locator('button[data-testid="keyword-group"]').filter({ hasText: new RegExp(escapeRegExp(term), 'i') }).first();
+  const visible = await pill.isVisible().catch(() => false);
+  if (!visible) return false;
+  const del = pill.locator('[aria-label="delete keyword"]').first();
+  const delVisible = await del.isVisible().catch(() => false);
+  if (!delVisible) return false;
+  await del.click({ force: true }).catch(() => null);
+  const deleteConfirm = page.locator('button:has-text("Delete")').first();
+  const confirmVisible = await deleteConfirm.isVisible().catch(() => false);
+  if (confirmVisible) {
+    await deleteConfirm.click({ force: true }).catch(() => null);
+  }
+  await page.waitForTimeout(220);
+  return true;
+}
+
+async function clearAllBouncerGroups(page) {
+  for (let i = 0; i < 24; i += 1) {
+    const firstPill = page.locator('button[data-testid="keyword-group"]').first();
+    const visible = await firstPill.isVisible().catch(() => false);
+    if (!visible) break;
+    const del = firstPill.locator('[aria-label="delete keyword"]').first();
+    const delVisible = await del.isVisible().catch(() => false);
+    if (!delVisible) break;
+    await del.click({ force: true }).catch(() => null);
+    const deleteConfirm = page.locator('button:has-text("Delete")').first();
+    const confirmVisible = await deleteConfirm.isVisible().catch(() => false);
+    if (confirmVisible) {
+      await deleteConfirm.click({ force: true }).catch(() => null);
+    }
+    await page.waitForTimeout(160);
+  }
+}
+
+async function openBouncerGroup(page, term) {
+  const pill = page.locator('button[data-testid="keyword-group"]').filter({ hasText: new RegExp(escapeRegExp(term), 'i') }).first();
+  await pill.waitFor({ state: 'visible', timeout: 12000 });
+  await pill.click({ force: true, position: { x: 24, y: 18 } }).catch(() => null);
+  await page.waitForTimeout(160);
+}
+
+async function captureBouncerKeywordCount(page, term) {
+  const count = await page.evaluate((needle) => {
+    const normalize = (s) => String(s || '').replace(/["']/g, '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    const target = normalize(needle);
+    const input = document.querySelector('input[placeholder="Input any number of Tags"]');
+    if (!input) return null;
+    const minY = input.getBoundingClientRect().bottom - 4;
+    const chips = Array.from(document.querySelectorAll('[data-testid="keyword-item"]'))
+      .filter((el) => el.getBoundingClientRect().top >= minY);
+
+    for (const chip of chips) {
+      const full = normalize(chip.textContent || '');
+      const termText = normalize(
+        Array.from(chip.childNodes || [])
+          .filter((n) => n.nodeType === Node.TEXT_NODE)
+          .map((n) => n.textContent || '')
+          .join(' ')
+      ) || normalize(full.replace(/\b[0-9][0-9,]*\b/g, '').replace(/\bx\b/gi, ''));
+      if (termText !== target) continue;
+      const spans = Array.from(chip.querySelectorAll('span')).map((s) => String(s.textContent || '').trim());
+      for (const s of spans) {
+        const m = s.match(/\b([0-9][0-9,]*)\b/);
+        if (!m) continue;
+        const n = Number(String(m[1]).replace(/,/g, ''));
+        if (Number.isFinite(n) && n >= 0) return n;
+      }
+    }
+    return null;
+  }, term).catch(() => null);
+  return Number.isFinite(count) ? Number(count) : null;
+}
+
+async function lookupSingleTermInventory(page, term) {
+  await ensureBouncerKeywordsGroupsExpanded(page);
+  const input = page.locator('input[placeholder="Search for a Keyword Group"]').first();
+  await input.waitFor({ state: 'visible', timeout: 15000 });
+  await input.click({ force: true });
+  await input.fill('');
+  await input.type(term, { delay: 14 });
+  await clickFirstVisibleLocator(page.locator('button[aria-label="add tag"]').first());
+  await page.waitForTimeout(260);
+  await openBouncerGroup(page, term);
+
+  let count = null;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 8000) {
+    count = await captureBouncerKeywordCount(page, term);
+    if (Number.isFinite(count)) break;
+    await page.waitForTimeout(200);
+  }
+
+  await deleteBouncerGroupByTerm(page, term).catch(() => null);
+  return Number.isFinite(count) ? count : null;
+}
+
+function resolveLookupImpressionGoalForCampaignType(campaignType, goalsByType = {}, groups = []) {
+  const key = normalizeCampaignTypeGoalKey(campaignType);
+  const byTypeGoal = toPositiveInt(goalsByType?.[key], 0);
+  if (byTypeGoal > 0) return byTypeGoal;
+  const byGroupReserved = groups
+    .filter((g) => normalizeCampaignType(g?.campaignType, DEFAULT_CAMPAIGN_TYPE) === key)
+    .reduce((sum, g) => sum + toPositiveInt(g?.reservedImpressions, 0), 0);
+  if (byGroupReserved > 0) return byGroupReserved;
+  return toPositiveInt(TOTAL_IMPRESSIONS, 0);
+}
+
+async function launchBouncerWindowAtStart() {
+  const staleLockNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'RunningChromeVersion'];
+  const clearLocks = async (profileDir) => {
+    for (const name of staleLockNames) {
+      const p = path.join(profileDir, name);
+      await fs.unlink(p).catch(() => null);
+    }
+  };
+
+  const base = {
+    headless: false,
+    viewport: { width: 1600, height: 1000 },
+    slowMo: SLOW_MO,
+    ...(BROWSER_EXECUTABLE_PATH ? { executablePath: BROWSER_EXECUTABLE_PATH } : {}),
+    ...(PLAYWRIGHT_CHANNEL ? { channel: PLAYWRIGHT_CHANNEL } : {}),
+    args: ['--disable-crash-reporter', '--disable-crashpad', '--disable-breakpad']
+  };
+
+  const profileCandidates = [BOUNCER_PROFILE_DIR, `${BOUNCER_PROFILE_DIR}-fresh-${Date.now()}`];
+  let lastError = null;
+
+  for (let p = 0; p < profileCandidates.length; p += 1) {
+    const profileDir = profileCandidates[p];
+    if (CLEAR_SINGLETON_LOCKS || p > 0) {
+      await clearLocks(profileDir);
+    }
+    if (p > 0) {
+      await fs.rm(profileDir, { recursive: true, force: true }).catch(() => null);
+    }
+    try {
+      const context = await chromium.launchPersistentContext(profileDir, base);
+      const page = context.pages()[0] || (await context.newPage());
+      const url = page.url();
+      if (!/\/website\/inventory-explorer\/|\/users\/login\//i.test(url)) {
+        await page.goto(BOUNCER_INVENTORY_EXPLORER_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
+      } else if (url === 'about:blank') {
+        await page.goto(BOUNCER_INVENTORY_EXPLORER_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
+      }
+      if (/\/users\/login\//i.test(page.url())) {
+        console.log('Opened Bouncer window at login. Please log in there before inventory lookup runs.');
+      } else {
+        console.log('Opened Bouncer Inventory Explorer window.');
+      }
+      return { context, page, profileDir };
+    } catch (error) {
+      lastError = error;
+      const msg = String(error?.message || error).split('\n')[0];
+      console.warn(`Bouncer window launch failed (profile=${profileDir}): ${msg}`);
+    }
+  }
+  throw lastError || new Error('Unable to launch Bouncer window.');
+}
+
+async function shouldOpenBouncerWindowAtStart() {
+  if (!BOUNCER_LOOKUP_ENABLED) return false;
+  if (!CAMPAIGN_FILE) return false;
+
+  try {
+    const raw = await fs.readFile(CAMPAIGN_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    const reservation = parsed?.reservation || {};
+
+    const mode = normalizeImpressionAllocationMode(
+      reservation.impression_allocation_mode
+      || reservation.impression_split_mode
+      || reservation.impression_split
+      || parsed.impression_allocation_mode
+      || parsed.impression_split_mode
+      || parsed.impression_split
+      || IMPRESSION_ALLOCATION_MODE,
+      'keyword_inventory_proportional_by_campaign_type'
+    );
+    const goalsByType = parseImpressionGoalsByCampaignType(
+      reservation.impression_goals_by_campaign_type
+      || reservation.impression_goals_by_type
+      || reservation.impression_goals
+      || parsed.impression_goals_by_campaign_type
+      || parsed.impression_goals_by_type
+      || parsed.impression_goals
+      || {}
+    );
+    const hasCampaignTypeGoals = Object.keys(goalsByType).length > 0;
+    const totalImpressions = toPositiveInt(
+      reservation.total_impressions
+      || reservation.total_reserved_impressions
+      || parsed.total_impressions
+      || parsed.total_reserved_impressions
+      || 0,
+      0
+    );
+    const modeForTypeGoals = mode === 'legacy_even' ? 'even' : 'keyword_inventory_proportional';
+    const inventoryLookupNeeded = (
+      (hasCampaignTypeGoals && modeForTypeGoals === 'keyword_inventory_proportional')
+      || (!hasCampaignTypeGoals && totalImpressions > 0 && mode === 'legacy_keyword_inventory_proportional')
+    );
+    if (!inventoryLookupNeeded) return false;
+
+    const rawGroups = parsed.ad_groups || parsed.adGroups || reservation.ad_groups || [];
+    if (!Array.isArray(rawGroups) || rawGroups.length === 0) return false;
+    const normalizedGroups = rawGroups
+      .map((g) => normalizeGroup(g, RESERVED_IMPS_PER_GROUP, CPM_PER_GROUP))
+      .filter(Boolean);
+
+    return normalizedGroups.some((group) => {
+      const type = normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE);
+      const hasInventory = Array.isArray(group?.keywordInventoryRows) && group.keywordInventoryRows.length > 0;
+      const hasTerms = Array.isArray(group?.keywords) && group.keywords.length > 0;
+      return type === 'search' && !hasInventory && hasTerms;
+    });
+  } catch (error) {
+    console.warn(`Bouncer preflight check failed; defaulting to Koddi-only startup. ${String(error?.message || error).split('\n')[0]}`);
+    return false;
+  }
+}
+
+async function populateMissingKeywordInventoryFromBouncer(groups, goalsByType = {}, options = {}) {
+  if (!BOUNCER_LOOKUP_ENABLED) return groups;
+  if (!Array.isArray(groups) || groups.length === 0) return groups;
+
+  const lookupCandidates = groups
+    .map((group, index) => ({ group, index }))
+    .filter(({ group }) => {
+      const type = normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE);
+      const hasInventory = Array.isArray(group?.keywordInventoryRows) && group.keywordInventoryRows.length > 0;
+      const hasTerms = Array.isArray(group?.keywords) && group.keywords.length > 0;
+      return type === 'search' && !hasInventory && hasTerms;
+    });
+
+  if (lookupCandidates.length === 0) return groups;
+  console.log(`Missing keyword inventory detected for ${lookupCandidates.length} search ad group(s); running Bouncer lookup.`);
+
+  let context = options?.bouncerSession?.context || null;
+  let page = options?.bouncerSession?.page || null;
+  let ownsSession = false;
+  if (!context || !page || page.isClosed()) {
+    const launched = await launchBouncerWindowAtStart();
+    context = launched.context;
+    page = launched.page;
+    ownsSession = true;
+  }
+
+  try {
+    const pageUrl = page.url();
+    if (!/\/website\/inventory-explorer\/|\/users\/login\//i.test(pageUrl)) {
+      await page.goto(BOUNCER_INVENTORY_EXPLORER_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    }
+    await ensureBouncerLoggedIn(page);
+    await ensureBouncerKeywordsGroupsExpanded(page);
+    await setBouncerGifs(page);
+    await setBouncerDates(page, START_DATE, END_DATE);
+
+    const byType = new Map();
+    for (const entry of lookupCandidates) {
+      const type = normalizeCampaignType(entry.group.campaignType, DEFAULT_CAMPAIGN_TYPE);
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(entry);
+    }
+
+    for (const [type, entries] of byType.entries()) {
+      const goal = resolveLookupImpressionGoalForCampaignType(type, goalsByType, groups);
+      if (goal > 0) {
+        await setBouncerImpressionGoal(page, goal);
+      }
+      await clearAllBouncerGroups(page);
+
+      const uniqueTerms = dedupeStrings(entries.flatMap(({ group }) => Array.isArray(group.keywords) ? group.keywords : []));
+      const inventoryMap = new Map();
+      for (const term of uniqueTerms) {
+        const count = await lookupSingleTermInventory(page, term);
+        if (count == null) {
+          throw new Error(`Bouncer lookup could not capture inventory for keyword "${term}"`);
+        }
+        inventoryMap.set(normalizeUiText(term), count);
+        console.log(`Bouncer inventory ${type}:${term}=${count}`);
+      }
+
+      for (const { group, index } of entries) {
+        const rows = dedupeStrings(group.keywords).map((term) => ({
+          term,
+          availableInventory: toNonNegativeNumber(inventoryMap.get(normalizeUiText(term)), 0)
+        }));
+        groups[index] = {
+          ...group,
+          keywordInventoryRows: rows
+        };
+      }
+    }
+  } finally {
+    if (ownsSession && !options?.keepWindowOpen) {
+      await context.close().catch(() => null);
+    }
+  }
+
+  return groups;
+}
+
+async function applyCampaignOverrides(options = {}) {
   if (!CAMPAIGN_FILE) return;
 
   const raw = await fs.readFile(CAMPAIGN_FILE, 'utf8');
@@ -626,10 +1061,22 @@ async function applyCampaignOverrides() {
   }));
 
   const hasCampaignTypeGoals = Object.keys(IMPRESSION_GOALS_BY_CAMPAIGN_TYPE).length > 0;
+  const modeForTypeGoals = IMPRESSION_ALLOCATION_MODE === 'legacy_even'
+    ? 'even'
+    : 'keyword_inventory_proportional';
+  const inventoryLookupNeeded = (
+    (hasCampaignTypeGoals && modeForTypeGoals === 'keyword_inventory_proportional')
+    || (!hasCampaignTypeGoals && TOTAL_IMPRESSIONS > 0 && IMPRESSION_ALLOCATION_MODE === 'legacy_keyword_inventory_proportional')
+  );
+  if (inventoryLookupNeeded) {
+    AD_GROUPS = await populateMissingKeywordInventoryFromBouncer(
+      AD_GROUPS,
+      IMPRESSION_GOALS_BY_CAMPAIGN_TYPE,
+      { bouncerSession: options?.bouncerSession, keepWindowOpen: true }
+    );
+  }
+
   if (hasCampaignTypeGoals && AD_GROUPS.length > 0) {
-    const modeForTypeGoals = IMPRESSION_ALLOCATION_MODE === 'legacy_even'
-      ? 'even'
-      : 'keyword_inventory_proportional';
     const allocation = allocateImpressionsByCampaignTypeGoals(
       AD_GROUPS,
       IMPRESSION_GOALS_BY_CAMPAIGN_TYPE,
@@ -2451,9 +2898,21 @@ async function createOneAdGroup(page, group, idx) {
 }
 
 async function main() {
-  await applyCampaignOverrides();
+  const openBouncerAtStart = await shouldOpenBouncerWindowAtStart();
+  if (openBouncerAtStart) {
+    console.log('Detected search keywords without available_inventory; opening Koddi + Bouncer windows at startup.');
+  } else {
+    console.log('Keyword inventory already provided (or not required); opening Koddi window only.');
+  }
 
-  const launched = await launchBrowserContext();
+  const [launched, bouncerSession] = await Promise.all([
+    launchBrowserContext(),
+    openBouncerAtStart ? launchBouncerWindowAtStart() : Promise.resolve(null)
+  ]);
+  const bouncerContext = bouncerSession?.context || null;
+
+  await applyCampaignOverrides({ bouncerSession });
+
   const context = launched.context;
   context.setDefaultTimeout(2500);
   context.setDefaultNavigationTimeout(7000);
@@ -2496,9 +2955,16 @@ async function main() {
     }
     await captureDiagnostics(page, `submit-failed-${submitResult.reason}`);
     if (KEEP_BROWSER_OPEN) {
-      console.error('Submit failed and diagnostics were captured. Browser left open for inspection; script exiting without closing browser.');
+      if (bouncerContext) {
+        console.error('Submit failed and diagnostics were captured. Koddi + Bouncer windows left open for inspection; script exiting without closing browser.');
+      } else {
+        console.error('Submit failed and diagnostics were captured. Koddi window left open for inspection; script exiting without closing browser.');
+      }
     } else {
       console.error('Submit failed; closing browser/context automatically.');
+      if (bouncerContext) {
+        await bouncerContext.close().catch(() => null);
+      }
       if (launched.viaCdp) {
         await launched.browser?.close().catch(() => null);
       } else {
@@ -2515,9 +2981,16 @@ async function main() {
   }
 
   if (KEEP_BROWSER_OPEN) {
-    console.log('Completed ad-group creation and verified Submit success. Browser left open for manual verification; script exiting without closing browser.');
+    if (bouncerContext) {
+      console.log('Completed ad-group creation and verified Submit success. Koddi + Bouncer windows left open for manual verification; script exiting without closing browser.');
+    } else {
+      console.log('Completed ad-group creation and verified Submit success. Koddi window left open for manual verification; script exiting without closing browser.');
+    }
   } else {
     console.log('Completed ad-group creation and verified Submit success. Closing browser/context automatically.');
+    if (bouncerContext) {
+      await bouncerContext.close().catch(() => null);
+    }
     if (launched.viaCdp) {
       await launched.browser?.close().catch(() => null);
     } else {
