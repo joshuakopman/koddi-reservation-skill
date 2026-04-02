@@ -135,6 +135,70 @@ Ad group 2:
 - keywords: ["march madness", "basketball", "score"]
 ```
 
+### Example Prompt 3: Real-World AdOps Spreadsheet (Draft JSON, Keywords Pending)
+
+Use this when you have a real campaign sheet and need a clean JSON draft first, before final keywords are ready.
+
+```text
+$koddi-reservation-campaign-builder
+
+Please generate a valid campaign JSON for the Koddi reservation automation, then run the skill using that JSON and leave the browser open at the end.
+
+Requirements:
+- Reservation name: AMC This City Is Ours 2026-04-01 to 2026-06-30
+- Start date: 04/01/2026
+- End date: 06/30/2026
+- Advertiser name: AMC
+- For every group unless overridden:
+  - countries = ["United States"]
+  - positions = ["Position 1"]
+  - ad_contexts = ["*"]
+  - click_url = https://www.amcplus.com/pages/prestige/
+  - cta_url = https://www.amcplus.com/pages/prestige/
+  - cta_text = "Watch Now"
+
+Ad type mapping (must follow exactly):
+- Search Rotational / AV Search Rotational: ["API: GIF"] (or ["API: Sticker"] if explicitly specified)
+- Link Out GIF / AV Link Out GIF: ["Clickable"]
+- AV Rotational Video Unit: ["Video"]
+
+Build these AdOps product buckets and split impressions evenly within each bucket (remainder +1 to earliest groups):
+- Ad Product - Flight Type: Link Out GIFs
+  - total impressions: 310,000
+  - cpm: 10
+  - ad type: Clickable
+  - creatives: all 6 GIF creatives listed below
+- Ad Product - Flight Type: AV Search Rotational
+  - total impressions: 4,545,455
+  - cpm: 0
+  - ad type: API: GIF
+  - creatives: all 6 GIF creatives listed below
+  - keywords: []
+- Ad Product - Flight Type: AV Link Out GIFs
+  - total impressions: 5,000,000
+  - cpm: 0
+  - ad type: Clickable
+  - creatives: all 6 GIF creatives listed below
+- Ad Product - Flight Type: AV Rotational Video Unit
+  - total impressions: 2,272,727
+  - cpm: 0
+  - ad type: Video
+  - creatives: the 2 clip URLs listed below
+  - CTA text override for "The Audacity 15s (pre premiere)" = "Learn More"
+
+GIF creatives (use for Link Out GIFs + AV Search Rotational + AV Link Out GIFs):
+- one of those things | https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
+- who's in charge? | https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
+- sus | https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c
+- so proud | https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M
+- oh shit | https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5
+- i got this | https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-james-nelson-joyce-1Tr4I0P4RkQcUHfkjJ
+
+Video-unit creatives:
+- This City is Ours 15s | https://giphy.com/clips/amc-tv-amc-this-city-is-ours-2yBKmWCN8BppnYSym
+- The Audacity 15s (pre premiere) | https://giphy.com/clips/amc-tv-amc-the-audacity-ZNXOI5GZ8rCw5IoY0L
+```
+
 ## Quick Start (Local JSON Runner)
 
 Prerequisites:
