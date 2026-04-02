@@ -263,3 +263,43 @@ Ad group 2:
   - { "term": "score", "available_inventory": 49000 }
 
 ```
+
+### Example Prompt 2: Search-Only Terms (No Provided Inventory, Bouncer Lookup Required)
+
+Use this when keywords are provided as plain terms (no `available_inventory`). The automation will open Bouncer, fetch inventory for each term, then compute reserved impressions.
+
+```text
+$koddi-reservation-campaign-builder
+
+Please generate a valid campaign JSON for the Koddi reservation automation, then run the skill using that JSON and leave the browser open at the end.
+
+Requirements:
+- Reservation name: Bouncer to Koddi Inventory Lookup
+- Start date: 05/01/2026
+- End date: 05/31/2026
+- Advertiser name: Demo Advertiser
+- impression_allocation_mode: keyword_inventory_proportional_by_campaign_type
+- impression_goals_by_campaign_type:
+  - search: 5,000,000
+- reservation.cpm_per_group: 11
+- For every group unless overridden:
+  - countries = ["United States"]
+  - positions = ["Position 1"]
+  - ad_types = ["API: GIF"]
+  - ad_contexts = ["*"]
+  - carousel_gifs = [gif_url]
+  - click_url = gif_url
+  - cta_url = gif_url
+
+Ad group 1:
+- name: GIF 1
+- campaign_type: search
+- gif_url: https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX
+- keywords: ["happy", "yay", "omg"]
+
+Ad group 2:
+- name: GIF 2
+- campaign_type: search
+- gif_url: https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M
+- keywords: ["march madness", "basketball", "score"]
+```
