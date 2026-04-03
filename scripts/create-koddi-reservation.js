@@ -2501,15 +2501,12 @@ async function setExactAttributeSelections(page, panel, values = [], opts = {}) 
         for (const container of containers) {
           const button = container.querySelector('button[role="checkbox"]');
           if (!button) continue;
-
           const parent = container.parentElement;
-          const siblingText = normalizeText(
-            Array.from(parent?.children || [])
-              .filter((el) => el !== container)
-              .map((el) => el.textContent || '')
-              .join(' ')
-          );
-          const rowText = siblingText || normalizeText(parent?.textContent || '');
+          const labelNode = container.nextElementSibling
+            || Array.from(parent?.children || []).find((el) => el !== container)
+            || parent?.querySelector?.('div.line-clamp-2')
+            || parent;
+          const rowText = normalizeText(labelNode?.textContent || '');
           if (!matchesTarget(rowText, needleValue)) continue;
 
           const isChecked = button.getAttribute('aria-checked') === 'true';
@@ -2549,15 +2546,12 @@ async function setExactAttributeSelections(page, panel, values = [], opts = {}) 
     for (const container of containers) {
       const button = container.querySelector('button[role="checkbox"]');
       if (!button) continue;
-
       const parent = container.parentElement;
-      const siblingText = normalizeText(
-        Array.from(parent?.children || [])
-          .filter((el) => el !== container)
-          .map((el) => el.textContent || '')
-          .join(' ')
-      );
-      const rowText = siblingText || normalizeText(parent?.textContent || '');
+      const labelNode = container.nextElementSibling
+        || Array.from(parent?.children || []).find((el) => el !== container)
+        || parent?.querySelector?.('div.line-clamp-2')
+        || parent;
+      const rowText = normalizeText(labelNode?.textContent || '');
       const shouldBeChecked = targets.some((t) => matchesTarget(rowText, t));
 
       let isChecked = button.getAttribute('aria-checked') === 'true';
@@ -2794,6 +2788,80 @@ async function getKeywordSelectionCount(page, targetGroupIndex = 0) {
   return m ? Number(m[1]) : 0;
 }
 
+async function verifyExactSelectedKeywords(page, requestedKeywords = [], opts = {}) {
+  const targetGroupIndex = Number.isInteger(opts.targetGroupIndex) ? opts.targetGroupIndex : 0;
+  const adgroupNum = Number.isInteger(opts.adgroupNum) ? opts.adgroupNum : null;
+  const expected = dedupeStrings(requestedKeywords).map((v) => normalizeUiText(v));
+  if (expected.length === 0) return { ok: true, missing: [], extras: [], selected: [] };
+
+  await dismissDatePickerPopover(page, adgroupNum);
+  const activeGroup = await getTargetingGroup(page, targetGroupIndex);
+  if (!activeGroup) return { ok: false, missing: [...expected], extras: [], selected: [] };
+
+  const attributeTrigger = activeGroup
+    .locator('[data-testid="attribute-select--trigger--button"], [data-testid="attribute-select--trigger"] button')
+    .first();
+  const triggerVisible = await attributeTrigger.isVisible().catch(() => false);
+  if (!triggerVisible) return { ok: false, missing: [...expected], extras: [], selected: [] };
+
+  const panel = await openPanelFromTrigger(page, attributeTrigger, 2200);
+  if (!panel) return { ok: false, missing: [...expected], extras: [], selected: [] };
+  const panelReady = await waitForAttributeChoices(panel, 2200);
+  if (!panelReady) return { ok: false, missing: [...expected], extras: [], selected: [] };
+
+  const searchInput = panel.locator('input[placeholder*="Search"]').first();
+  const hasSearch = await searchInput.isVisible().catch(() => false);
+  const missing = [];
+  const selected = [];
+
+  for (const value of expected) {
+    if (hasSearch) {
+      await searchInput.fill('').catch(() => {});
+      await searchInput.fill(value).catch(() => {});
+      await page.waitForTimeout(65);
+    }
+    const status = await panel.evaluate((root, needleValue) => {
+      const normalizeText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      const canonicalText = (s) => normalizeText(s).replace(/[^a-z0-9]+/g, ' ').trim();
+      const target = canonicalText(needleValue);
+      const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
+      for (const container of containers) {
+        const button = container.querySelector('button[role="checkbox"]');
+        if (!button) continue;
+        const parent = container.parentElement;
+        const labelNode = container.nextElementSibling
+          || Array.from(parent?.children || []).find((el) => el !== container)
+          || parent?.querySelector?.('div.line-clamp-2')
+          || parent;
+        const rowText = normalizeText(labelNode?.textContent || '');
+        const rowCanonical = canonicalText(rowText.replace(/^keyword\s*:\s*/i, ''));
+        if (rowCanonical !== target) continue;
+        return {
+          found: true,
+          checked: button.getAttribute('aria-checked') === 'true'
+        };
+      }
+      return { found: false, checked: false };
+    }, value).catch(() => ({ found: false, checked: false }));
+    if (status.found && status.checked) {
+      selected.push(value);
+    } else {
+      missing.push(value);
+    }
+  }
+
+  if (hasSearch) {
+    await searchInput.fill('').catch(() => {});
+  }
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.keyboard.press('Escape').catch(() => {});
+
+  const selectedCount = await getKeywordSelectionCount(page, targetGroupIndex);
+  const extras = selectedCount > expected.length ? [`count+${selectedCount - expected.length}`] : [];
+  const ok = missing.length === 0 && selectedCount === expected.length;
+  return { ok, missing, extras, selected };
+}
+
 async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, requestedKeywords = [], opts = {}) {
   const targetGroupIndex = Number.isInteger(opts.targetGroupIndex) ? opts.targetGroupIndex : 0;
   const adgroupNum = Number.isInteger(opts.adgroupNum) ? opts.adgroupNum : null;
@@ -2801,7 +2869,24 @@ async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, reques
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const ok = await setKeywords(page, targetCount, requestedKeywords, { targetGroupIndex, adgroupNum });
     const selectedCount = await getKeywordSelectionCount(page, targetGroupIndex);
-    if (ok && expectedSelectionCount > 0) return true;
+    if (expectedSelectionCount > 0) {
+      // Fast path: when Koddi reports the exact requested count selected, move on.
+      if (selectedCount === expectedSelectionCount) return true;
+      const exact = await verifyExactSelectedKeywords(
+        page,
+        dedupeStrings(requestedKeywords).slice(0, targetCount),
+        { targetGroupIndex, adgroupNum }
+      );
+      if (exact.ok) return true;
+      if (DEBUG_KEYWORD_FAILURES) {
+        const missingTxt = exact.missing.length ? exact.missing.join(', ') : '(none)';
+        const extrasTxt = exact.extras.length ? exact.extras.join(', ') : '(none)';
+        console.warn(
+          `Exact keyword verification mismatch on attempt ${attempt} for target group ${targetGroupIndex + 1}; `
+          + `selected_count=${selectedCount}, missing=${missingTxt}, extras=${extrasTxt}`
+        );
+      }
+    }
     if (ok && expectedSelectionCount === 0 && selectedCount > 0) return true;
     await page.keyboard.press('Escape').catch(() => {});
     await page.waitForTimeout(140);
@@ -3499,7 +3584,7 @@ async function createOneAdGroup(page, group, idx) {
   await page.keyboard.press('Escape').catch(() => {});
   await page.waitForTimeout(20);
 
-  const nameStillSet = await ensureAdGroupNameBeforeDone(page, adgroupNum, group.name);
+  const nameStillSet = await ensureAdGroupNameBeforeDone(page, adgroupNum, adGroupNameForUi);
   if (!nameStillSet) {
     await captureDiagnostics(page, `${label}-name-recheck-failed`);
     throw new Error(`Ad group name lost before Done for ${group.name}`);
