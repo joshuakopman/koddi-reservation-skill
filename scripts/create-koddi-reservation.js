@@ -2491,13 +2491,11 @@ async function setExactAttributeSelections(page, panel, values = [], opts = {}) 
         const matchesTarget = (rowText, target) => {
           if (!rowText || !target) return false;
           if (rowText === target) return true;
-          const padded = ` ${rowText} `;
-          if (padded.includes(` ${target} `)) return true;
           const canonicalRow = canonicalText(rowText);
           const canonicalTarget = canonicalText(target);
           if (!canonicalRow || !canonicalTarget) return false;
           if (canonicalRow === canonicalTarget) return true;
-          return ` ${canonicalRow} `.includes(` ${canonicalTarget} `);
+          return false;
         };
         const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
         for (const container of containers) {
@@ -2539,13 +2537,11 @@ async function setExactAttributeSelections(page, panel, values = [], opts = {}) 
     const matchesTarget = (rowText, target) => {
       if (!rowText || !target) return false;
       if (rowText === target) return true;
-      const padded = ` ${rowText} `;
-      if (padded.includes(` ${target} `)) return true;
       const canonicalRow = canonicalText(rowText);
       const canonicalTarget = canonicalText(target);
       if (!canonicalRow || !canonicalTarget) return false;
       if (canonicalRow === canonicalTarget) return true;
-      return ` ${canonicalRow} `.includes(` ${canonicalTarget} `);
+      return false;
     };
     const containers = Array.from(root.querySelectorAll('[data-testid="attribute-select--checkbox"]'));
     let checkedCount = 0;
@@ -2805,32 +2801,11 @@ async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, reques
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const ok = await setKeywords(page, targetCount, requestedKeywords, { targetGroupIndex, adgroupNum });
     const selectedCount = await getKeywordSelectionCount(page, targetGroupIndex);
-    // Koddi UI can occasionally report strict row-match failure even when the trigger confirms
-    // all requested keywords are selected. Accept exact selected-count as success.
-    if (expectedSelectionCount > 0 && selectedCount === expectedSelectionCount) return true;
-    if (ok && expectedSelectionCount > 0 && selectedCount === expectedSelectionCount) return true;
-    if (expectedSelectionCount > 0 && selectedCount > 0) {
-      console.warn(
-        `Keyword selection partially matched for target group ${targetGroupIndex + 1}: `
-        + `selected=${selectedCount}, requested=${expectedSelectionCount}. Continuing.`
-      );
-      return true;
-    }
+    if (ok && expectedSelectionCount > 0) return true;
     if (ok && expectedSelectionCount === 0 && selectedCount > 0) return true;
     await page.keyboard.press('Escape').catch(() => {});
     await page.waitForTimeout(140);
   }
-
-  if (expectedSelectionCount > 0) {
-    console.warn(
-      `Exact keyword matching failed for target group ${targetGroupIndex + 1}; `
-      + 'falling back to non-strict keyword selection.'
-    );
-    const fallbackOk = await setKeywords(page, targetCount, [], { targetGroupIndex, adgroupNum });
-    const fallbackCount = await getKeywordSelectionCount(page, targetGroupIndex);
-    if (fallbackOk && fallbackCount > 0) return true;
-  }
-
   return false;
 }
 
