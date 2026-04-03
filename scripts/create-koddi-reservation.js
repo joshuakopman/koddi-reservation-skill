@@ -930,6 +930,10 @@ async function enrichFromBouncerLineItem(groups, lineItemUrl, options = {}) {
   try {
     await page.goto(lineItemUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await ensureBouncerCampaignLoggedIn(page);
+    // If login redirected to a generic campaigns page, navigate back to the exact line-item URL before scraping.
+    if (normalizeUiText(page.url()) !== normalizeUiText(lineItemUrl)) {
+      await page.goto(lineItemUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    }
     const ready = await waitForBouncerLineItemCreativeCards(page, 30000);
     if (!ready) {
       throw new Error('Bouncer line-item page loaded but no creative cards (GIF ID) were detected.');
@@ -1491,7 +1495,9 @@ async function populateMissingKeywordInventoryFromBouncer(groups, goalsByType = 
       for (const term of uniqueTerms) {
         const count = await lookupSingleTermInventory(page, term);
         if (count == null) {
-          throw new Error(`Bouncer lookup could not capture inventory for keyword "${term}"`);
+          console.warn(`Bouncer lookup returned no inventory for keyword "${term}"; defaulting to 0.`);
+          inventoryMap.set(normalizeUiText(term), 0);
+          continue;
         }
         inventoryMap.set(normalizeUiText(term), count);
         console.log(`Bouncer inventory ${type}:${term}=${count}`);
@@ -2063,11 +2069,27 @@ async function selectFromPlaceholder(page, placeholderText, preferredValue = '')
 }
 
 async function clickCreateReservation(page, timeoutMs = 12000) {
+  const isOnReservationDetailsStep = async () => {
+    if (/\/reservations\/reserve/i.test(page.url())) return true;
+    const onExperienceStep = await page.getByText(/Targeted Reservation/i).first().isVisible().catch(() => false);
+    if (onExperienceStep) return true;
+    const nameVisible = await page
+      .locator('input[data-test="reservation-reserve.reservation_name-field--input"]')
+      .first()
+      .isVisible()
+      .catch(() => false);
+    return nameVisible;
+  };
+
+  if (await isOnReservationDetailsStep()) return true;
+
   const startedAt = Date.now();
   const selectors = [
     'button[data-test="add-reservation"]',
+    '[data-test="add-reservation"]',
     'button:has-text("+ Create")',
-    'button:has-text("Create")'
+    'button:has-text("Create")',
+    '[role="button"]:has-text("Create")'
   ];
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -2086,9 +2108,8 @@ async function clickCreateReservation(page, timeoutMs = 12000) {
           el.click();
         }).catch(() => null);
       }
-
-      const onExperienceStep = await page.getByText(/Targeted Reservation/i).first().isVisible().catch(() => false);
-      if (onExperienceStep) return true;
+      await page.waitForURL(/\/reservations\/reserve/i, { timeout: 1600 }).catch(() => null);
+      if (await isOnReservationDetailsStep()) return true;
     }
     await page.waitForTimeout(60);
   }
@@ -2121,7 +2142,10 @@ async function gotoAdGroupsStepFromReservations(page) {
     await page.waitForTimeout(350);
   }
 
-  const onExperienceStep = await page.getByText(/Targeted Reservation/i).first().isVisible().catch(() => false);
+  const onExperienceStep = (
+    /\/reservations\/reserve/i.test(page.url())
+    || await page.getByText(/Targeted Reservation/i).first().isVisible().catch(() => false)
+  );
   if (!onExperienceStep) {
     let createClicked = await clickCreateReservation(page, 12000);
 
@@ -2133,7 +2157,11 @@ async function gotoAdGroupsStepFromReservations(page) {
     if (!createClicked) return false;
   }
 
-  let reachedDetails = false;
+  let reachedDetails = await page
+    .locator('input[data-test="reservation-reserve.reservation_name-field--input"]')
+    .first()
+    .isVisible()
+    .catch(() => false);
   for (let attempt = 0; attempt < 3 && !reachedDetails; attempt += 1) {
     await clickFirst(page, [
       '[data-test^="workflow-experience-"][data-test$="--radio"]:has-text("Targeted Reservation")',
@@ -2757,10 +2785,28 @@ async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, reques
     // all requested keywords are selected. Accept exact selected-count as success.
     if (expectedSelectionCount > 0 && selectedCount === expectedSelectionCount) return true;
     if (ok && expectedSelectionCount > 0 && selectedCount === expectedSelectionCount) return true;
+    if (expectedSelectionCount > 0 && selectedCount > 0) {
+      console.warn(
+        `Keyword selection partially matched for target group ${targetGroupIndex + 1}: `
+        + `selected=${selectedCount}, requested=${expectedSelectionCount}. Continuing.`
+      );
+      return true;
+    }
     if (ok && expectedSelectionCount === 0 && selectedCount > 0) return true;
     await page.keyboard.press('Escape').catch(() => {});
     await page.waitForTimeout(140);
   }
+
+  if (expectedSelectionCount > 0) {
+    console.warn(
+      `Exact keyword matching failed for target group ${targetGroupIndex + 1}; `
+      + 'falling back to non-strict keyword selection.'
+    );
+    const fallbackOk = await setKeywords(page, targetCount, [], { targetGroupIndex, adgroupNum });
+    const fallbackCount = await getKeywordSelectionCount(page, targetGroupIndex);
+    if (fallbackOk && fallbackCount > 0) return true;
+  }
+
   return false;
 }
 
@@ -3482,19 +3528,18 @@ async function createOneAdGroup(page, group, idx) {
 
 async function main() {
   const openBouncerAtStart = await shouldOpenBouncerWindowAtStart();
+  let bouncerSession = null;
+  let bouncerContext = null;
   if (openBouncerAtStart) {
-    console.log('Detected search keywords without available_inventory; opening Koddi + Bouncer windows at startup.');
+    console.log('Detected search keywords without available_inventory; running Bouncer preprocessing first, then opening Koddi.');
+    bouncerSession = await launchBouncerWindowAtStart();
+    bouncerContext = bouncerSession?.context || null;
   } else {
     console.log('Keyword inventory already provided (or not required); opening Koddi window only.');
   }
 
-  const [launched, bouncerSession] = await Promise.all([
-    launchBrowserContext(),
-    openBouncerAtStart ? launchBouncerWindowAtStart() : Promise.resolve(null)
-  ]);
-  const bouncerContext = bouncerSession?.context || null;
-
   await applyCampaignOverrides({ bouncerSession });
+  const launched = await launchBrowserContext();
 
   const context = launched.context;
   context.setDefaultTimeout(2500);
