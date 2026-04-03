@@ -297,7 +297,7 @@ Each `ad_groups[]` item:
 - `ad_contexts` (string array, optional; defaults to `["*"]` which selects all available Ad Context checkboxes; applied in its own AND targeting group)
 - `ono_view_types` (string array, optional; used for Banner flows in an `OnO View Type` targeting group)
 - `countries` (string array, optional; defaults to `["United States"]`; applied in its own AND targeting group)
-- `positions` (string array, optional; defaults to `["Position 1"]`; applied in its own AND targeting group)
+- `positions` (string array, optional; defaults to `["Position 1"]` only for products that require Position targeting; applied in its own AND targeting group when present)
 - `keywords` (array, optional)
   - For `search`: if provided, script attempts exact keyword selection; if omitted/empty, script randomizes keywords in UI while excluding `# giphytrending #`.
   - For `trending`: script always uses exactly `["# giphytrending #"]`.

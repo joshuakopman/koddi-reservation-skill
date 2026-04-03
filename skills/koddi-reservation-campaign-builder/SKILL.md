@@ -54,7 +54,7 @@ Optional ad group fields:
 - `ad_types` (optional string array; for `search`/`trending` defaults to `["API: GIF"]`, and for `banner` it is forced to `["Banner"]`)
 - `ono_view_types` (optional string array for banner targeting dimension `OnO View Type`)
 - `countries` (optional string array; defaults to `["United States"]`)
-- `positions` (optional string array; defaults to `["Position 1"]`)
+- `positions` (optional string array; defaults to `["Position 1"]` only for products that require Position targeting)
 - `keywords` (optional; when provided, script attempts exact keyword selection in UI; otherwise random keywords are selected, excluding `# giphytrending #`)
   - For `keyword_inventory_proportional` mode, keywords can be objects like `{ "term": "happy", "available_inventory": 5518193 }`
 - `keyword_inventory` / `keyword_inventories` (optional map or array; alternate place to provide per-keyword inventory for proportional allocation)

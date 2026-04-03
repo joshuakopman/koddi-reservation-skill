@@ -1,27 +1,28 @@
 {
   "reservation": {
-    "name": "AV Search Rotational",
-    "start_date": "2026-04-01",
-    "end_date": "2026-06-30",
+    "name": "Example Search + Trending Rotational",
+    "start_date": "2026-04-21",
+    "end_date": "2026-05-05",
     "advertiser_name": "REQUIRED_EXACT_UI_ADVERTISER_LABEL",
-    "campaign_type": "search",
-    "total_impressions": 757576,
-    "impression_allocation_mode": "keyword_inventory_proportional",
-    "cpm_per_group": 10
+    "impression_allocation_mode": "keyword_inventory_proportional_by_campaign_type",
+    "impression_goals_by_campaign_type": {
+      "search": 2272727,
+      "trending": 3125000
+    },
+    "cpm_per_group": 11
   },
   "ad_groups": [
     {
-      "name": "one of those things",
+      "name": "GIF 1",
       "campaign_type": "search",
+      "adops_spreadsheet_name": "Search Rotational",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
-      "creative_id": "1iHDjCqdmDJOqZFYAX",
-      "creative_friendly_name": "one of those things",
+      "creative_friendly_name": "GIF 1",
       "click_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
       "cta_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX",
       "carousel_gifs": [
         "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-1iHDjCqdmDJOqZFYAX"
       ],
-      "keywords": [],
       "ad_types": [
         "API: GIF"
       ],
@@ -33,20 +34,33 @@
       ],
       "positions": [
         "Position 1"
+      ],
+      "keywords": [
+        {
+          "term": "happy",
+          "available_inventory": 5518193
+        },
+        {
+          "term": "yay",
+          "available_inventory": 1734000
+        },
+        {
+          "term": "omg",
+          "available_inventory": 844000
+        }
       ]
     },
     {
-      "name": "who's in charge?",
+      "name": "GIF 2",
       "campaign_type": "search",
+      "adops_spreadsheet_name": "Search Rotational",
       "gif_url": "https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M",
-      "creative_id": "qHe3kPRC3GeRZUIA5M",
-      "creative_friendly_name": "who's in charge?",
+      "creative_friendly_name": "GIF 2",
       "click_url": "https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M",
       "cta_url": "https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M",
       "carousel_gifs": [
         "https://giphy.com/gifs/amc-tv-amc-whos-in-charge-the-city-is-ours-qHe3kPRC3GeRZUIA5M"
       ],
-      "keywords": [],
       "ad_types": [
         "API: GIF"
       ],
@@ -58,20 +72,34 @@
       ],
       "positions": [
         "Position 1"
+      ],
+      "keywords": [
+        {
+          "term": "march madness",
+          "available_inventory": 122000
+        },
+        {
+          "term": "basketball",
+          "available_inventory": 1500
+        },
+        {
+          "term": "score",
+          "available_inventory": 49000
+        }
       ]
     },
     {
-      "name": "sus",
-      "gif_url": "https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c",
+      "name": "GIF 3 Trending",
       "campaign_type": "trending",
-      "creative_id": "6ZxKFYxtMFkkjTvQ0c",
-      "creative_friendly_name": "sus",
-      "click_url": "https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c",
-      "cta_url": "https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c",
+      "adops_spreadsheet_name": "Trending Rotational",
+      "gif_url": "https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE",
+      "creative_friendly_name": "GIF 3 Trending",
+      "click_url": "https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE",
+      "cta_url": "https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE",
       "carousel_gifs": [
-        "https://giphy.com/gifs/amc-tv-sus-amc-the-city-is-ours-6ZxKFYxtMFkkjTvQ0c"
+        "https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE"
       ],
-      "keywords": [],
+      "cpm": 8,
       "ad_types": [
         "API: GIF"
       ],
@@ -83,61 +111,12 @@
       ],
       "positions": [
         "Position 1"
-      ]
-    },
-    {
-      "name": "so proud",
-      "gif_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M",
-      "campaign_type": "banner",
-      "creative_id": "lhKDuY8bhcPRwKsL7M",
-      "creative_friendly_name": "so proud",
-      "click_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M",
-      "cta_url": "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M",
-      "carousel_gifs": [
-        "https://giphy.com/gifs/amc-tv-amc-sean-bean-the-city-is-ours-lhKDuY8bhcPRwKsL7M"
       ],
-      "keywords": [],
-      "ad_types": [
-        "API: GIF"
-      ],
-      "ad_contexts": [
-        "*"
-      ],
-      "ono_view_types": [
-        "Details Page",
-        "Home Page",
-        "Search Page"
-      ],
-      "countries": [
-        "United States"
-      ],
-      "positions": [
-        "Position 1"
-      ]
-    },
-    {
-      "name": "oh shit",
-      "campaign_type": "search",
-      "gif_url": "https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5",
-      "creative_id": "d6OvvJSLKz7vhtX8t5",
-      "creative_friendly_name": "oh shit",
-      "click_url": "https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5",
-      "cta_url": "https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5",
-      "carousel_gifs": [
-        "https://giphy.com/gifs/amc-tv-amc-the-city-is-ours-d6OvvJSLKz7vhtX8t5"
-      ],
-      "keywords": [],
-      "ad_types": [
-        "API: GIF"
-      ],
-      "ad_contexts": [
-        "*"
-      ],
-      "countries": [
-        "United States"
-      ],
-      "positions": [
-        "Position 1"
+      "keywords": [
+        {
+          "term": "# giphytrending #",
+          "available_inventory": 620000
+        }
       ]
     }
   ]

@@ -42,7 +42,6 @@ const DEFAULT_TRENDING_KEYWORDS = ['# giphytrending #'];
 const RESERVED_TRENDING_KEYWORD_TOKEN = 'giphytrending';
 const DEFAULT_COUNTRIES = ['United States'];
 const DEFAULT_AD_TYPES = ['API: GIF'];
-const DEFAULT_BANNER_AD_TYPES = ['Banner'];
 const DEFAULT_POSITIONS = ['Position 1'];
 const DEFAULT_AD_CONTEXTS = ['*'];
 const DEFAULT_APP_SURFACE_AD_CONTEXTS = ['GIPHY Web', 'GIPHY Android', 'GIPHY IOS'];
@@ -3015,7 +3014,10 @@ async function createOneAdGroup(page, group, idx) {
   }
 
   const countries = Array.isArray(group.countries) && group.countries.length ? group.countries : DEFAULT_COUNTRIES;
-  const positions = Array.isArray(group.positions) && group.positions.length ? group.positions : DEFAULT_POSITIONS;
+  const requiresPositionTargeting = group.requiresPositionTargeting !== false;
+  const positions = Array.isArray(group.positions) && group.positions.length
+    ? group.positions
+    : (requiresPositionTargeting ? DEFAULT_POSITIONS : []);
   const adTypesRaw = Array.isArray(group.adTypes) && group.adTypes.length ? group.adTypes : DEFAULT_AD_TYPES;
   const forcedAdTypes = Array.isArray(group.forceAdTypes) && group.forceAdTypes.length ? group.forceAdTypes : [];
   const adContexts = Array.isArray(group.adContexts) && group.adContexts.length ? group.adContexts : DEFAULT_AD_CONTEXTS;
@@ -3069,22 +3071,26 @@ async function createOneAdGroup(page, group, idx) {
     await page.waitForTimeout(TARGETING_GROUP_STEP_DELAY_MS);
   }
 
-  const positionGroupAdded = await addNewTargetingGroup(page);
-  if (!positionGroupAdded?.ok) {
-    await captureDiagnostics(page, `${label}-position-group-add-failed`);
-    throw new Error(`Could not add position targeting group for ${group.name}`);
-  }
-  const positionOk = await setAdditionalDimensionValues(page, 'Position', positions, {
-    addDimensionWithinGroup: false,
-    targetGroupIndex: positionGroupAdded.index,
-    adgroupNum
-  });
-  if (!positionOk) {
-    await captureDiagnostics(page, `${label}-position-targeting-failed`);
-    throw new Error(`Could not set position targeting for ${group.name}`);
-  }
-  if (TARGETING_GROUP_STEP_DELAY_MS > 0) {
-    await page.waitForTimeout(TARGETING_GROUP_STEP_DELAY_MS);
+  if (Array.isArray(positions) && positions.length > 0) {
+    const positionGroupAdded = await addNewTargetingGroup(page);
+    if (!positionGroupAdded?.ok) {
+      await captureDiagnostics(page, `${label}-position-group-add-failed`);
+      throw new Error(`Could not add position targeting group for ${group.name}`);
+    }
+    const positionOk = await setAdditionalDimensionValues(page, 'Position', positions, {
+      addDimensionWithinGroup: false,
+      targetGroupIndex: positionGroupAdded.index,
+      adgroupNum
+    });
+    if (!positionOk) {
+      await captureDiagnostics(page, `${label}-position-targeting-failed`);
+      throw new Error(`Could not set position targeting for ${group.name}`);
+    }
+    if (TARGETING_GROUP_STEP_DELAY_MS > 0) {
+      await page.waitForTimeout(TARGETING_GROUP_STEP_DELAY_MS);
+    }
+  } else {
+    console.log(`Position targeting not required for ${group.name}; skipping Position targeting group.`);
   }
 
   const adTypeGroupAdded = await addNewTargetingGroup(page);
