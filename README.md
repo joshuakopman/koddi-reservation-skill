@@ -24,6 +24,7 @@ Core behavior:
 - Computes reserved impressions from keyword inventory
   - if inventory is provided in prompt/JSON, uses it directly
   - if search keywords are term-only, opens Bouncer and fetches inventory automatically
+  - if search keywords/inventory are both missing and `reservation.bouncer_campaign_url` is provided, scrapes keywords from the Bouncer campaign page first, then fetches inventory
 - Submits and verifies success
 
 ## Quick Start (AdOps Prompt-First)
@@ -31,6 +32,7 @@ Core behavior:
 1. Pick one of the prompt examples in this README:
    - Example 1 when keyword inventory is already provided
    - Example 2 when only keyword terms are provided (Bouncer lookup fallback)
+   - Example 4 for Bouncer campaign URL source-of-truth (minimal input)
 2. Replace template values (name, dates, goals, CPMs, ad groups, GIF URLs, keywords) with your actual campaign values.
 3. Run the prompt in Codex (examples already include `$koddi-reservation-campaign-builder` at the top).
 4. Log in if prompted:
@@ -194,6 +196,53 @@ Video-unit creatives:
 - The Audacity 15s (pre premiere) | https://giphy.com/clips/amc-tv-amc-the-audacity-ZNXOI5GZ8rCw5IoY0L
 ```
 
+### Example Prompt 4: Bouncer Campaign URL Source-Of-Truth (Minimal)
+
+Use this when AdOps already configured the campaign in Bouncer and wants the skill to source campaign metadata/keywords directly from Bouncer.
+
+```text
+$koddi-reservation-campaign-builder
+
+Please generate campaign JSON and run the skill.
+
+Requirements:
+- reservation.name: Old El Paso Search Rotational (Bouncer Source)
+- reservation.advertiser_name: Demo Advertiser
+- reservation.impression_allocation_mode: keyword_inventory_proportional_by_campaign_type
+- reservation.bouncer_campaign_url: https://bouncer.giphy.tech/website/campaigns/d6d8222f-f55d-4103-afdf-5120e2086d23/line_items/2322/
+- Source reservation values from Bouncer campaign page when available:
+  - start_date, end_date, total_impressions, and search CPM
+
+Ad groups (search):
+- name: Yeehaw!
+  campaign_type: search
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE
+- name: Taco Tuesday!
+  campaign_type: search
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-gR7pHUpITamahKVY2L
+- name: On my way!
+  campaign_type: search
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VRmInwz0lyQo25TTwS
+- name: Gimme that!
+  campaign_type: search
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-dBP8vDQjz9xojpCPVD
+- name: It's taco time
+  campaign_type: search
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-25pbGxTTDlJlZiQ9Px
+- name: Happy Cinco de Mayo!
+  campaign_type: search
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-PLmRUJ5gJy9woVkSPz
+- name: Feed me!
+  campaign_type: search
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
+
+Behavior rules:
+1. If `keywords` include `available_inventory`, use those values directly (no Bouncer lookup).
+2. If `keywords` are term-only, keep terms and fetch only inventory from Bouncer Inventory Explorer.
+3. If both keywords and inventory are missing, use `bouncer_campaign_url` to scrape keywords by GIF ID from the Bouncer campaign page, then fetch inventory from Bouncer Inventory Explorer.
+4. Use Bouncer campaign metadata (start/end date, total impressions, CPM) as source-of-truth for the reservation/search pool.
+```
+
 ## Quick Start (Local JSON Runner)
 
 Prerequisites:
@@ -276,6 +325,8 @@ Top-level keys:
 - `total_impressions` (number, optional; used for legacy single-pool modes)
 - `reserved_impressions_per_group` (number, recommended fallback)
 - `cpm_per_group` (number, optional; defaults to `10`)
+- `bouncer_campaign_url` (string, optional; Bouncer campaign line-item URL used for keyword/metadata sourcing when needed)
+  - when provided, the skill can source reservation `start_date`, `end_date`, `total_impressions`, and search CPM from that Bouncer campaign page
 
 Each `ad_groups[]` item:
 
@@ -312,6 +363,8 @@ Keyword inventory fallback behavior:
 
 - If inventory is already provided (`keywords` objects with `available_inventory`, or `keyword_inventory` / `keyword_inventories`), the script uses it directly and skips Bouncer lookup.
 - If a `search` ad group only has keyword terms (no inventory), and the selected impression allocation mode requires keyword inventory, the script looks up term inventory in Bouncer Inventory Explorer and then performs the same reserved-impression calculations.
+- If a `search` ad group has no keywords and no inventory, and `reservation.bouncer_campaign_url` is provided, the script scrapes that Bouncer campaign page (matching by GIF ID from each `gif_url`) to populate keywords first, then performs inventory lookup in Bouncer Inventory Explorer.
+- When `reservation.bouncer_campaign_url` is provided, Bouncer campaign metadata is used as source-of-truth for search reservation settings (start/end date, total impressions, CPM) when values are available.
 - Impression allocation math always runs; only the inventory source changes.
 - Startup window behavior follows the same rule:
   - if any search group has term-only keywords, startup opens both Koddi and Bouncer windows
@@ -347,6 +400,7 @@ Bouncer lookup runtime controls (optional):
 - `BOUNCER_PROFILE_DIR` (default `<PLAYWRIGHT_PROFILE_DIR>-bouncer`): Playwright profile used for Bouncer login/session.
 - `BOUNCER_INVENTORY_EXPLORER_URL` (default `https://bouncer.giphy.tech/website/inventory-explorer/`)
 - `BOUNCER_LOGIN_WAIT_MS` (default `1200000`): max wait for manual Bouncer login before failing.
+- `BOUNCER_CAMPAIGN_URL` (optional env fallback for `reservation.bouncer_campaign_url`)
 
 CPM precedence:
 
@@ -369,6 +423,7 @@ CPM precedence:
       "search": 2272727,
       "trending": 3125000
     },
+    "bouncer_campaign_url": "https://bouncer.giphy.tech/website/campaigns/d6d8222f-f55d-4103-afdf-5120e2086d23/line_items/2322/",
     "cpm_per_group": 11
   },
   "ad_groups": [

@@ -35,6 +35,7 @@ Use this shape:
 - `reservation.total_impressions` (optional; used for legacy single-pool modes)
 - `reservation.reserved_impressions_per_group` (default fallback for each ad group)
 - `reservation.cpm_per_group` (optional CPM fallback; defaults to `10`)
+- `reservation.bouncer_campaign_url` (optional; Bouncer campaign line-item URL used for keyword/metadata sourcing when needed)
 - `ad_groups[]` with at minimum:
   - `name`
   - `gif_url` (or `click_url`/`cta_url`)
@@ -63,6 +64,8 @@ Inventory lookup behavior for proportional modes:
 
 - If keyword inventory is already provided (`keywords` objects with `available_inventory`, or `keyword_inventory` / `keyword_inventories`), the script skips Bouncer lookup and uses that inventory directly.
 - If a `search` ad group has term-only keywords (no inventory provided), the script opens Bouncer Inventory Explorer, captures inventory per term, and then runs the same proportional reserved-impression calculations.
+- If a `search` ad group has no keywords and no inventory, and `reservation.bouncer_campaign_url` is provided, the script scrapes keywords from that Bouncer campaign page (matched by GIF ID from each ad group `gif_url`) before inventory lookup.
+- When `reservation.bouncer_campaign_url` is provided, Bouncer campaign metadata (start/end date, total impressions, CPM) is used as source-of-truth when available.
 - Impression calculations always run; Bouncer lookup is only a fallback source for missing inventory.
 - Startup window behavior mirrors this:
   - term-only search keywords => open Koddi + Bouncer windows at startup

@@ -9,6 +9,7 @@
       "search": 2272727,
       "trending": 3125000
     },
+    "bouncer_campaign_url": "https://bouncer.giphy.tech/website/campaigns/<campaign-id>/line_items/<line-item-id>/",
     "cpm_per_group": 11
   },
   "ad_groups": [
