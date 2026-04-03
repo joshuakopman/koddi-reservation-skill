@@ -89,7 +89,7 @@ Impression precedence:
 CPM precedence:
 
 - `ad_groups[].cpm`
-- if no per-group CPM is provided and the ad group appears Added Value (`AV` prefix in `name`, `product_type`, or `ad_types`), CPM defaults to `0` for that group
+- if no per-group CPM is provided and the ad group appears Added Value (`AV` prefix in `name`, `product_type`, or `ad_types`), CPM defaults to `0.01` for that group
 - `reservation.cpm_per_group` (or `reservation.cpm`)
 - default `10`
 

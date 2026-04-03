@@ -48,6 +48,7 @@ const DEFAULT_APP_SURFACE_AD_CONTEXTS = ['GIPHY Web', 'GIPHY Android', 'GIPHY IO
 const DEFAULT_ONO_VIEW_TYPES = ['Details Page', 'Home Page', 'Search Page'];
 const SEARCH_ROTATIONAL_NAME_SUFFIX = ' - Search Rotational';
 const TRENDING_ROTATIONAL_NAME_SUFFIX = ' - Trending Rotational';
+const ADDED_VALUE_MIN_CPM = 0.01;
 const BOUNCER_INVENTORY_EXPLORER_URL = process.env.BOUNCER_INVENTORY_EXPLORER_URL || 'https://bouncer.giphy.tech/website/inventory-explorer/';
 const BOUNCER_LOOKUP_ENABLED = process.env.BOUNCER_LOOKUP_ENABLED !== '0';
 const BOUNCER_PROFILE_DIR = process.env.BOUNCER_PROFILE_DIR || `${PROFILE_DIR}-bouncer`;
@@ -1045,9 +1046,15 @@ function normalizeGroup(raw, fallbackImps, fallbackCpm) {
   const rawCpm = raw?.cpm ?? raw?.reservation_cpm ?? raw?.reservationCpm ?? raw?.cpm_per_group ?? raw?.cpmPerGroup;
   const hasExplicitGroupCpm = rawCpm !== undefined && rawCpm !== null && String(rawCpm).trim() !== '';
   const addedValueGroup = isAddedValueGroup({ name, productType, adTypeValues: adTypes });
-  const resolvedCpm = hasExplicitGroupCpm
-    ? toNonNegativeNumber(rawCpm, fallbackCpm)
-    : (addedValueGroup ? 0 : toNonNegativeNumber(rawCpm, fallbackCpm));
+  const parsedGroupCpm = toNonNegativeNumber(rawCpm, fallbackCpm);
+  let resolvedCpm;
+  if (hasExplicitGroupCpm) {
+    resolvedCpm = addedValueGroup && parsedGroupCpm < ADDED_VALUE_MIN_CPM
+      ? ADDED_VALUE_MIN_CPM
+      : parsedGroupCpm;
+  } else {
+    resolvedCpm = addedValueGroup ? ADDED_VALUE_MIN_CPM : parsedGroupCpm;
+  }
 
   return {
     name: String(name),
@@ -3390,8 +3397,8 @@ async function createOneAdGroup(page, group, idx) {
   }
 
   const cpmValue = toNonNegativeNumber(group.cpm, CPM_PER_GROUP);
-  if (group.addedValueGroup && cpmValue === 0) {
-    console.log(`Added Value (AV) group detected for ${group.name}; using CPM 0.`);
+  if (group.addedValueGroup && cpmValue === ADDED_VALUE_MIN_CPM) {
+    console.log(`Added Value (AV) group detected for ${group.name}; using CPM ${ADDED_VALUE_MIN_CPM}.`);
   }
   const cpmSel = await fillNumericFirst(page, [
     `input[data-test="adgroup.${adgroupNum}.reservation_cpm-field--input"]`,

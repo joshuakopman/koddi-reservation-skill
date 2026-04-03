@@ -167,18 +167,18 @@ Build these AdOps product buckets and split impressions evenly within each bucke
   - creatives: all 6 GIF creatives listed below
 - Ad Product - Flight Type: AV Search Rotational
   - total impressions: 4,545,455
-  - cpm: 0
+  - cpm: 0.01
   - ad type: API: GIF
   - creatives: all 6 GIF creatives listed below
   - keywords: []
 - Ad Product - Flight Type: AV Link Out GIFs
   - total impressions: 5,000,000
-  - cpm: 0
+  - cpm: 0.01
   - ad type: Clickable
   - creatives: all 6 GIF creatives listed below
 - Ad Product - Flight Type: AV Rotational Video Unit
   - total impressions: 2,272,727
-  - cpm: 0
+  - cpm: 0.01
   - ad type: Video
   - creatives: the 2 clip URLs listed below
   - CTA text override for "The Audacity 15s (pre premiere)" = "Learn More"
@@ -399,7 +399,7 @@ Bouncer lookup runtime controls (optional):
 CPM precedence:
 
 - `ad_groups[].cpm` (if provided)
-- if no per-group CPM is provided and the ad group appears Added Value (`AV` prefix in `name`, `product_type`, or `ad_types`), CPM defaults to `0` for that group
+- if no per-group CPM is provided and the ad group appears Added Value (`AV` prefix in `name`, `product_type`, or `ad_types`), CPM defaults to `0.01` for that group
 - `reservation.cpm_per_group` (or `reservation.cpm`)
 - default `10`
 
