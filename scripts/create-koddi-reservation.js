@@ -46,6 +46,8 @@ const DEFAULT_POSITIONS = ['Position 1'];
 const DEFAULT_AD_CONTEXTS = ['*'];
 const DEFAULT_APP_SURFACE_AD_CONTEXTS = ['GIPHY Web', 'GIPHY Android', 'GIPHY IOS'];
 const DEFAULT_ONO_VIEW_TYPES = ['Details Page', 'Home Page', 'Search Page'];
+const SEARCH_ROTATIONAL_NAME_SUFFIX = ' - Search Rotational';
+const TRENDING_ROTATIONAL_NAME_SUFFIX = ' - Trending Rotational';
 const BOUNCER_INVENTORY_EXPLORER_URL = process.env.BOUNCER_INVENTORY_EXPLORER_URL || 'https://bouncer.giphy.tech/website/inventory-explorer/';
 const BOUNCER_LOOKUP_ENABLED = process.env.BOUNCER_LOOKUP_ENABLED !== '0';
 const BOUNCER_PROFILE_DIR = process.env.BOUNCER_PROFILE_DIR || `${PROFILE_DIR}-bouncer`;
@@ -2273,6 +2275,28 @@ function normalizeUiText(value) {
   return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+function getConventionalAdGroupName(name, campaignType = DEFAULT_CAMPAIGN_TYPE) {
+  const rawName = String(name || '').trim();
+  if (!rawName) return rawName;
+
+  const normalizedType = normalizeCampaignType(campaignType, DEFAULT_CAMPAIGN_TYPE);
+  if (normalizedType === 'search') {
+    const suffixNormalized = normalizeUiText(SEARCH_ROTATIONAL_NAME_SUFFIX);
+    const rawNormalized = normalizeUiText(rawName);
+    if (rawNormalized.endsWith(suffixNormalized) || /\bsearch\s+rotational\b/i.test(rawName)) return rawName;
+    return `${rawName}${SEARCH_ROTATIONAL_NAME_SUFFIX}`;
+  }
+
+  if (normalizedType === 'trending') {
+    const suffixNormalized = normalizeUiText(TRENDING_ROTATIONAL_NAME_SUFFIX);
+    const rawNormalized = normalizeUiText(rawName);
+    if (rawNormalized.endsWith(suffixNormalized) || /\btrending\s+rotational\b/i.test(rawName)) return rawName;
+    return `${rawName}${TRENDING_ROTATIONAL_NAME_SUFFIX}`;
+  }
+
+  return rawName;
+}
+
 function isReservedTrendingKeywordValue(value) {
   const normalized = normalizeUiText(value);
   if (!normalized) return false;
@@ -3264,7 +3288,12 @@ async function createOneAdGroup(page, group, idx) {
   const label = `adgroup-${idx + 1}`;
   const adgroupNum = idx + 1;
   const startedAt = Date.now();
+  const resolvedCampaignType = normalizeCampaignType(group.campaignType, DEFAULT_CAMPAIGN_TYPE);
+  const adGroupNameForUi = getConventionalAdGroupName(group.name, resolvedCampaignType);
   console.log(`Creating ${label}: ${group.name}`);
+  if (adGroupNameForUi !== group.name) {
+    console.log(`Applying naming convention for ${group.name} -> ${adGroupNameForUi}`);
+  }
 
   const openCreate = await clickFirst(page, [
     '[data-test="create-card--Ad Groups"]',
@@ -3282,7 +3311,7 @@ async function createOneAdGroup(page, group, idx) {
     throw new Error(`Could not reset targeting groups for ${group.name}`);
   }
 
-  const nameSet = await setAdGroupNameStrict(page, adgroupNum, group.name);
+  const nameSet = await setAdGroupNameStrict(page, adgroupNum, adGroupNameForUi);
   if (!nameSet) {
     await captureDiagnostics(page, `${label}-name-fill-failed`);
     throw new Error(`Could not fill ad group name for ${group.name}`);
@@ -3330,7 +3359,6 @@ async function createOneAdGroup(page, group, idx) {
   await fillFirst(page, ['input[data-test="6326-CTA URL--input"]'], group.ctaUrl || group.gifUrl).catch(() => null);
   await dismissDatePickerPopover(page, adgroupNum);
 
-  const resolvedCampaignType = normalizeCampaignType(group.campaignType, DEFAULT_CAMPAIGN_TYPE);
   const shouldApplySearchQueryTargeting = resolvedCampaignType !== 'banner';
   let requestedKeywords = Array.isArray(group.keywords) ? group.keywords : [];
   if (resolvedCampaignType === 'trending') {
