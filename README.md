@@ -203,7 +203,7 @@ Use this when AdOps already configured the campaign in Bouncer and wants the ski
 ```text
 $koddi-reservation-campaign-builder
 
-Please generate campaign JSON and run the skill.
+Please generate a valid campaign JSON for the Koddi reservation automation, then run the skill using that JSON and leave the browser open at the end.
 
 Requirements:
 - reservation.name: Old El Paso Search Rotational (Bouncer Source)
@@ -235,12 +235,6 @@ Ad groups (search):
 - name: Feed me!
   campaign_type: search
   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
-
-Behavior rules:
-1. If `keywords` include `available_inventory`, use those values directly (no Bouncer lookup).
-2. If `keywords` are term-only, keep terms and fetch only inventory from Bouncer Inventory Explorer.
-3. If both keywords and inventory are missing, use `bouncer_campaign_url` to scrape keywords by GIF ID from the Bouncer campaign page, then fetch inventory from Bouncer Inventory Explorer.
-4. Use Bouncer campaign metadata (start/end date, total impressions, CPM) as source-of-truth for the reservation/search pool.
 ```
 
 ## Quick Start (Local JSON Runner)
