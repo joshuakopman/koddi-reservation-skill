@@ -892,6 +892,16 @@ async function resolveBouncerLineItemUrlsByType(page, campaignUrl, campaignTypes
     { timeout: 6000 }
   ).catch(() => null);
 
+  const waitForLineItemLabel = async (pattern, timeoutMs = 8000) => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const hasLabel = await page.getByText(pattern).first().isVisible().catch(() => false);
+      if (hasLabel) return true;
+      await page.waitForTimeout(180).catch(() => null);
+    }
+    return false;
+  };
+
   const resolved = {};
   const preferredLabelByType = {
     search: /search rotational/i,
@@ -905,17 +915,24 @@ async function resolveBouncerLineItemUrlsByType(page, campaignUrl, campaignTypes
     if (normalizeUiText(page.url()) !== normalizeUiText(rootUrl)) {
       await page.goto(rootUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
     }
+    await waitForLineItemLabel(labelPattern, 9000).catch(() => null);
 
     let clicked = false;
     const clickLocators = [
       page.locator('a[href*="/line_items/"]').filter({ hasText: labelPattern }).first(),
-      page.getByText(labelPattern).first()
+      page.getByText(labelPattern).first(),
+      page.locator('tr, [role="row"], li, article, section, div').filter({ hasText: labelPattern }).first()
     ];
     for (const locator of clickLocators) {
       const visible = await locator.isVisible().catch(() => false);
       if (!visible) continue;
-      clicked = await locator.click({ force: true, timeout: 1800 }).then(() => true).catch(() => false);
-      if (clicked) break;
+      const didClick = await locator.click({ force: true, timeout: 1800 }).then(() => true).catch(() => false);
+      if (!didClick) continue;
+      const movedToLineItem = await page.waitForURL(/\/line_items\/\d+/i, { timeout: 2500 }).then(() => true).catch(() => false);
+      if (movedToLineItem) {
+        clicked = true;
+        break;
+      }
     }
 
     if (!clicked) {
@@ -937,26 +954,38 @@ async function resolveBouncerLineItemUrlsByType(page, campaignUrl, campaignTypes
         const matches = nodes
           .map((el) => ({ el, text: normalize(el.textContent || '') }))
           .filter((x) => x.text && x.text.includes(needleText))
-          .sort((a, b) => a.text.length - b.text.length);
+          .sort((a, b) => b.text.length - a.text.length);
         if (matches.length === 0) return false;
 
         const target = matches[0].el;
-        let clickable = target;
-        for (let i = 0; i < 8 && clickable; i += 1) {
-          if (looksClickable(clickable)) break;
-          clickable = clickable.parentElement;
+        const chain = [];
+        let cursor = target;
+        for (let i = 0; i < 10 && cursor; i += 1) {
+          chain.push(cursor);
+          cursor = cursor.parentElement;
         }
-        const clickTarget = clickable || target;
-        if (typeof clickTarget.click === 'function') {
-          clickTarget.click();
-          return true;
+
+        for (const candidate of chain) {
+          if (!looksClickable(candidate)) continue;
+          try {
+            candidate.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            candidate.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            candidate.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            if (typeof candidate.click === 'function') candidate.click();
+            return true;
+          } catch {
+            // continue up the chain
+          }
         }
         return false;
       }, needle).catch(() => false);
+      if (clicked) {
+        const movedToLineItem = await page.waitForURL(/\/line_items\/\d+/i, { timeout: 3000 }).then(() => true).catch(() => false);
+        clicked = movedToLineItem;
+      }
     }
 
     if (clicked) {
-      await page.waitForURL(/\/line_items\/\d+/i, { timeout: 8000 }).catch(() => null);
       const maybeLineItemUrl = toBouncerViewOnlyUrl(page.url());
       if (isBouncerLineItemUrl(maybeLineItemUrl)) {
         resolved[campaignType] = maybeLineItemUrl;
@@ -1046,7 +1075,7 @@ async function scrapeBouncerLineItemCreativesAndMetadata(page) {
     const bodyText = normalize(document.body?.innerText || '');
     const dateRangeMatch = bodyText.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})\s*-\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/);
     const nodes = Array.from(document.querySelectorAll('span, div, p, td, th'));
-    const looksLikeValue = (text) => /(^\$?[0-9][0-9,]*(\.[0-9]+)?$)|(\d{1,2}\/\d{1,2}\/\d{2,4})/.test(text);
+    const looksLikeValue = (text) => /(^\$?\s*[0-9][0-9,]*(\.[0-9]+)?$)|(\d{1,2}\/\d{1,2}\/\d{2,4})/.test(text);
     const findLabelValue = (exactLabel) => {
       const target = normalizeTerm(exactLabel);
       for (const node of nodes) {
@@ -1062,6 +1091,46 @@ async function scrapeBouncerLineItemCreativesAndMetadata(page) {
           }
           const first = normalize(parent.firstElementChild?.textContent || '');
           if (first && looksLikeValue(first)) return first;
+        }
+      }
+      return '';
+    };
+    const findInputValueNearLabel = (exactLabel) => {
+      const target = normalizeTerm(exactLabel);
+      const labels = Array.from(document.querySelectorAll('label, span, div, p, th, td'))
+        .filter((el) => normalizeTerm(el.textContent || '') === target);
+      for (const label of labels) {
+        let cursor = label;
+        for (let depth = 0; depth < 6 && cursor; depth += 1) {
+          const root = cursor.parentElement || cursor;
+          const input = root.querySelector?.('input, textarea');
+          if (input) {
+            const value = normalize(input.value || input.getAttribute('value') || input.textContent || '');
+            if (value) return value;
+          }
+          const combo = root.querySelector?.('[role="combobox"]');
+          if (combo) {
+            const value = normalize(combo.textContent || combo.getAttribute('value') || '');
+            if (value) return value;
+          }
+          cursor = cursor.parentElement;
+        }
+      }
+      return '';
+    };
+    const findGreenValueNearLabel = (exactLabel) => {
+      const target = normalizeTerm(exactLabel);
+      const labels = Array.from(document.querySelectorAll('label, span, div, p, th, td'))
+        .filter((el) => normalizeTerm(el.textContent || '') === target);
+      for (const label of labels) {
+        let cursor = label;
+        for (let depth = 0; depth < 6 && cursor; depth += 1) {
+          const root = cursor.parentElement || cursor;
+          const green = Array.from(root.querySelectorAll?.('span, div, p') || [])
+            .map((el) => normalize(el.textContent || ''))
+            .find((text) => /^\$?\s*[0-9][0-9,]*(\.[0-9]+)?$/.test(text));
+          if (green) return green;
+          cursor = cursor.parentElement;
         }
       }
       return '';
@@ -1110,7 +1179,7 @@ async function scrapeBouncerLineItemCreativesAndMetadata(page) {
         impressionsRemainingRaw: findLabelValue('Impressions Remaining'),
         spentRaw: findLabelValue('Spent'),
         spendRemainingRaw: findLabelValue('Spend Remaining'),
-        cpmRaw: findLabelValue('CPM')
+        cpmRaw: findGreenValueNearLabel('CPM') || findLabelValue('CPM') || findInputValueNearLabel('CPM')
       }
     };
   });
@@ -1541,12 +1610,12 @@ async function openBouncerGroup(page, term) {
   await page.waitForTimeout(160);
 }
 
-async function captureBouncerKeywordCount(page, term) {
-  const count = await page.evaluate((needle) => {
+async function captureBouncerKeywordState(page, term) {
+  const state = await page.evaluate((needle) => {
     const normalize = (s) => String(s || '').replace(/["']/g, '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
     const target = normalize(needle);
     const input = document.querySelector('input[placeholder="Input any number of Tags"]');
-    if (!input) return null;
+    if (!input) return { found: false, count: null, noMatch: false, pending: false };
     const minY = input.getBoundingClientRect().bottom - 4;
     const chips = Array.from(document.querySelectorAll('[data-testid="keyword-item"]'))
       .filter((el) => el.getBoundingClientRect().top >= minY);
@@ -1560,17 +1629,28 @@ async function captureBouncerKeywordCount(page, term) {
           .join(' ')
       ) || normalize(full.replace(/\b[0-9][0-9,]*\b/g, '').replace(/\bx\b/gi, ''));
       if (termText !== target) continue;
+      const noMatch = /\bn\/a\b/.test(full) || /\bno\s*match\b/.test(full) || /\bno\s*results?\b/.test(full);
+      const pending = /\bloading\b/.test(full) || /\bsearching\b/.test(full) || /\bcalculating\b/.test(full);
       const spans = Array.from(chip.querySelectorAll('span')).map((s) => String(s.textContent || '').trim());
       for (const s of spans) {
         const m = s.match(/\b([0-9][0-9,]*)\b/);
         if (!m) continue;
         const n = Number(String(m[1]).replace(/,/g, ''));
-        if (Number.isFinite(n) && n >= 0) return n;
+        if (Number.isFinite(n) && n >= 0) return { found: true, count: n, noMatch, pending: false };
       }
+      return { found: true, count: null, noMatch, pending };
     }
-    return null;
+    return { found: false, count: null, noMatch: false, pending: false };
   }, term).catch(() => null);
-  return Number.isFinite(count) ? Number(count) : null;
+  if (!state || typeof state !== 'object') {
+    return { found: false, count: null, noMatch: false, pending: false };
+  }
+  return {
+    found: Boolean(state.found),
+    count: Number.isFinite(state.count) ? Number(state.count) : null,
+    noMatch: Boolean(state.noMatch),
+    pending: Boolean(state.pending)
+  };
 }
 
 async function lookupSingleTermInventory(page, term) {
@@ -1585,11 +1665,29 @@ async function lookupSingleTermInventory(page, term) {
   await openBouncerGroup(page, term);
 
   let count = null;
+  let unresolvedSeenAt = null;
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 8000) {
-    count = await captureBouncerKeywordCount(page, term);
-    if (Number.isFinite(count)) break;
-    await page.waitForTimeout(200);
+  while (Date.now() - startedAt < 5000) {
+    const state = await captureBouncerKeywordState(page, term);
+    if (Number.isFinite(state.count)) {
+      count = state.count;
+      break;
+    }
+    if (state.noMatch) {
+      count = 0;
+      break;
+    }
+    if (state.found && !state.pending) {
+      if (unresolvedSeenAt == null) {
+        unresolvedSeenAt = Date.now();
+      } else if (Date.now() - unresolvedSeenAt >= 1800) {
+        count = 0;
+        break;
+      }
+    } else {
+      unresolvedSeenAt = null;
+    }
+    await page.waitForTimeout(120);
   }
 
   await deleteBouncerGroupByTerm(page, term).catch(() => null);
