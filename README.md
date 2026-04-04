@@ -203,7 +203,7 @@ Use this when AdOps already configured the campaign in Bouncer and wants the ski
 ```text
 $koddi-reservation-campaign-builder
 
-Please generate a valid campaign JSON for the Koddi reservation automation, then run the skill using that JSON and leave the browser open at the end.
+Generate a valid campaign JSON, run the Koddi reservation automation with it, and leave the browser open at the end.
 
 Requirements:
 - reservation.name: Old El Paso Search + Trending Rotational (Bouncer Source)
@@ -212,55 +212,20 @@ Requirements:
 - reservation.impression_goals_by_campaign_type:
   - search: 2,272,729
   - trending: 3,125,000
-- reservation.bouncer_campaign_url: https://bouncer.giphy.tech/website/campaigns/d6d8222f-f55d-4103-afdf-5120e2086d23/line_items/2322/
-- Source reservation values from Bouncer campaign page when available:
-  - start_date, end_date, total_impressions, and campaign-type CPMs (search/trending)
+- reservation.bouncer_campaign_url: https://bouncer.giphy.tech/website/campaigns/d6d8222f-f55d-4103-afdf-5120e2086d23/
+- Source reservation values from Bouncer when available (start_date, end_date, total_impressions, CPMs).
 
 Ad groups (search):
-- name: Yeehaw!
-  campaign_type: search
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE
-- name: Taco Tuesday!
-  campaign_type: search
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-gR7pHUpITamahKVY2L
-- name: On my way!
-  campaign_type: search
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VRmInwz0lyQo25TTwS
-- name: Gimme that!
-  campaign_type: search
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-dBP8vDQjz9xojpCPVD
-- name: It's taco time
-  campaign_type: search
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-25pbGxTTDlJlZiQ9Px
-- name: Happy Cinco de Mayo!
-  campaign_type: search
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-PLmRUJ5gJy9woVkSPz
-- name: Feed me!
-  campaign_type: search
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
+- Yeehaw! | https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE
+- Taco Tuesday! | https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-gR7pHUpITamahKVY2L
+- On my way! | https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VRmInwz0lyQo25TTwS
+- Gimme that! | https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-dBP8vDQjz9xojpCPVD
+- It's taco time | https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-25pbGxTTDlJlZiQ9Px
+- Happy Cinco de Mayo! | https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-PLmRUJ5gJy9woVkSPz
+- Feed me! | https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
 
 Ad groups (trending):
-- name: Yeehaw!
-  campaign_type: trending
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE
-- name: Taco Tuesday!
-  campaign_type: trending
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-gR7pHUpITamahKVY2L
-- name: On my way!
-  campaign_type: trending
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VRmInwz0lyQo25TTwS
-- name: Gimme that!
-  campaign_type: trending
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-dBP8vDQjz9xojpCPVD
-- name: It's taco time
-  campaign_type: trending
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-25pbGxTTDlJlZiQ9Px
-- name: Happy Cinco de Mayo!
-  campaign_type: trending
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-PLmRUJ5gJy9woVkSPz
-- name: Feed me!
-  campaign_type: trending
-  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
+- Use the same 7 names + GIF URLs as above, but campaign_type: trending.
 ```
 
 ## Quick Start (Local JSON Runner)
@@ -383,11 +348,12 @@ Keyword inventory fallback behavior:
 
 - If inventory is already provided (`keywords` objects with `available_inventory`, or `keyword_inventory` / `keyword_inventories`), the script uses it directly and skips Bouncer lookup.
 - If a `search` ad group only has keyword terms (no inventory), and the selected impression allocation mode requires keyword inventory, the script looks up term inventory in Bouncer Inventory Explorer and then performs the same reserved-impression calculations.
-- If a `search` ad group has no keywords and no inventory, and `reservation.bouncer_campaign_url` is provided, the script scrapes that Bouncer campaign page (matching by GIF ID from each `gif_url`) to populate keywords first, then performs inventory lookup in Bouncer Inventory Explorer.
-- When `reservation.bouncer_campaign_url` is provided, Bouncer campaign metadata is used as source-of-truth for search reservation settings (start/end date, total impressions, CPM) when values are available.
+- If a `search` ad group has no keywords and no inventory, and `reservation.bouncer_campaign_url` is provided, the script scrapes Bouncer line-item creatives (matching by GIF ID from each `gif_url`) to populate keywords first, then performs inventory lookup in Bouncer Inventory Explorer.
+- If `reservation.bouncer_campaign_url` points to a campaign root URL, the script resolves matching line items by campaign type (for example Search Rotational and Trending Rotational), normalizes any `/edit/` URLs to view mode, and uses those line items for enrichment.
+- When `reservation.bouncer_campaign_url` is provided, Bouncer metadata is used as source-of-truth for reservation settings by campaign type (start/end date, total impressions goals, CPM) when values are available.
 - Impression allocation math always runs; only the inventory source changes.
 - Startup window behavior follows the same rule:
-  - if any search group has term-only keywords, startup opens both Koddi and Bouncer windows
+  - if any search/trending group needs Bouncer enrichment or inventory lookup, startup opens both Koddi and Bouncer windows
   - if keyword inventory objects are already present, startup opens only Koddi
 
 AdOps Product Behavior:

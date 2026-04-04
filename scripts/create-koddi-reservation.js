@@ -654,9 +654,12 @@ function allocateImpressionsByCampaignTypeGoals(groups, goalsByType = {}, mode =
       throw new Error(`impression_goals_by_campaign_type includes "${goalKey}" but no ad_groups matched campaign_type "${key}"`);
     }
 
+    const allocationStrategy = (mode === 'even' || key === 'trending')
+      ? 'even'
+      : 'keyword_inventory_proportional';
     let localSplits = [];
     let totalInventory = 0;
-    if (mode === 'even') {
+    if (allocationStrategy === 'even') {
       localSplits = distributeImpressionsEvenly(goal, matching.length);
     } else {
       const proportional = distributeImpressionsByKeywordInventory(goal, matching.map((x) => x.group));
@@ -678,7 +681,14 @@ function allocateImpressionsByCampaignTypeGoals(groups, goalsByType = {}, mode =
       }
     });
     totalGoals += goal;
-    summaries.push({ key, goal, groupCount: matching.length, totalInventory, splits: localSplits });
+    summaries.push({
+      key,
+      goal,
+      groupCount: matching.length,
+      totalInventory,
+      splits: localSplits,
+      strategy: allocationStrategy
+    });
   }
 
   return { splits, summaries, assignedGroupCount, totalGoals };
@@ -826,6 +836,196 @@ async function waitForBouncerLineItemCreativeCards(page, timeoutMs = 30000) {
   return false;
 }
 
+function toBouncerViewOnlyUrl(urlValue) {
+  const raw = String(urlValue || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    parsed.pathname = parsed.pathname.replace(/\/edit\/?$/i, '/');
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    return raw.replace(/\/edit\/?$/i, '/');
+  }
+}
+
+function isBouncerLineItemUrl(urlValue) {
+  return /\/line_items\/\d+(?:\/|$)/i.test(String(urlValue || ''));
+}
+
+function scoreBouncerLineItemText(text, campaignType = '') {
+  const normalized = normalizeUiText(text);
+  const type = normalizeCampaignType(campaignType, DEFAULT_CAMPAIGN_TYPE);
+  if (!normalized) return Number.NEGATIVE_INFINITY;
+
+  let score = 0;
+  if (type === 'search') {
+    if (/\bsearch rotational\b/.test(normalized)) score += 100;
+    if (/\bsearch\b/.test(normalized)) score += 40;
+    if (/\btrending\b/.test(normalized)) score -= 30;
+    if (/\btakeover\b/.test(normalized)) score -= 20;
+  } else if (type === 'trending') {
+    if (/\btrending rotational\b/.test(normalized)) score += 120;
+    if (/\btrending\b/.test(normalized)) score += 40;
+    if (/\btakeover\b/.test(normalized)) score -= 120;
+    if (/\bsticker\b/.test(normalized)) score -= 80;
+    if (/\bsearch\b/.test(normalized)) score -= 40;
+  } else {
+    if (/\brotational\b/.test(normalized)) score += 10;
+  }
+
+  return score;
+}
+
+async function resolveBouncerLineItemUrlsByType(page, campaignUrl, campaignTypes = []) {
+  const rootUrl = toBouncerViewOnlyUrl(campaignUrl);
+  if (!rootUrl) return {};
+
+  await page.goto(rootUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await ensureBouncerCampaignLoggedIn(page);
+  if (normalizeUiText(page.url()) !== normalizeUiText(rootUrl)) {
+    await page.goto(rootUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  }
+  await page.waitForTimeout(600).catch(() => null);
+  await page.waitForFunction(
+    () => /line item/i.test(String(document.body?.innerText || '')),
+    { timeout: 6000 }
+  ).catch(() => null);
+
+  const resolved = {};
+  const preferredLabelByType = {
+    search: /search rotational/i,
+    trending: /trending rotational/i
+  };
+
+  for (const campaignType of campaignTypes) {
+    const labelPattern = preferredLabelByType[campaignType];
+    if (!labelPattern) continue;
+
+    if (normalizeUiText(page.url()) !== normalizeUiText(rootUrl)) {
+      await page.goto(rootUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
+    }
+
+    let clicked = false;
+    const clickLocators = [
+      page.locator('a[href*="/line_items/"]').filter({ hasText: labelPattern }).first(),
+      page.getByText(labelPattern).first()
+    ];
+    for (const locator of clickLocators) {
+      const visible = await locator.isVisible().catch(() => false);
+      if (!visible) continue;
+      clicked = await locator.click({ force: true, timeout: 1800 }).then(() => true).catch(() => false);
+      if (clicked) break;
+    }
+
+    if (!clicked) {
+      const needle = String(labelPattern.source || '').replace(/\\s\+/g, ' ').trim().toLowerCase();
+      clicked = await page.evaluate((needleText) => {
+        const normalize = (value) => String(value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+        const looksClickable = (el) => {
+          if (!el) return false;
+          if (el.tagName === 'A' || el.tagName === 'BUTTON') return true;
+          const role = String(el.getAttribute?.('role') || '').toLowerCase();
+          if (role === 'row' || role === 'button' || role === 'link') return true;
+          const onclick = String(el.getAttribute?.('onclick') || '').trim();
+          if (onclick) return true;
+          const style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+          return Boolean(style && style.cursor === 'pointer');
+        };
+
+        const nodes = Array.from(document.querySelectorAll('*'));
+        const matches = nodes
+          .map((el) => ({ el, text: normalize(el.textContent || '') }))
+          .filter((x) => x.text && x.text.includes(needleText))
+          .sort((a, b) => a.text.length - b.text.length);
+        if (matches.length === 0) return false;
+
+        const target = matches[0].el;
+        let clickable = target;
+        for (let i = 0; i < 8 && clickable; i += 1) {
+          if (looksClickable(clickable)) break;
+          clickable = clickable.parentElement;
+        }
+        const clickTarget = clickable || target;
+        if (typeof clickTarget.click === 'function') {
+          clickTarget.click();
+          return true;
+        }
+        return false;
+      }, needle).catch(() => false);
+    }
+
+    if (clicked) {
+      await page.waitForURL(/\/line_items\/\d+/i, { timeout: 8000 }).catch(() => null);
+      const maybeLineItemUrl = toBouncerViewOnlyUrl(page.url());
+      if (isBouncerLineItemUrl(maybeLineItemUrl)) {
+        resolved[campaignType] = maybeLineItemUrl;
+      }
+    }
+  }
+
+  const unresolvedTypes = campaignTypes.filter((type) => !resolved[type]);
+  if (unresolvedTypes.length === 0) return resolved;
+
+  const links = await page.evaluate(() => {
+    const normalize = (value) => String(value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    const anchors = Array.from(document.querySelectorAll('a[href*="/line_items/"]'));
+    return anchors.map((anchor) => {
+      const href = anchor.getAttribute('href') || '';
+      let node = anchor;
+      for (let i = 0; i < 6 && node?.parentElement; i += 1) {
+        const txt = normalize(node.textContent || '');
+        if (txt.length >= 8) break;
+        node = node.parentElement;
+      }
+      const contextNode = node?.closest?.('tr, [role="row"], li, article, section') || node || anchor;
+      const text = normalize(contextNode?.textContent || anchor.textContent || '');
+      return { href, text };
+    });
+  }).catch(() => []);
+
+  const candidates = links
+    .map((entry) => {
+      const abs = (() => {
+        try {
+          return new URL(entry.href, rootUrl).toString();
+        } catch {
+          return '';
+        }
+      })();
+      return {
+        url: toBouncerViewOnlyUrl(abs),
+        text: String(entry.text || '')
+      };
+    })
+    .filter((entry) => isBouncerLineItemUrl(entry.url));
+
+  const uniqueByUrl = new Map();
+  for (const candidate of candidates) {
+    if (!uniqueByUrl.has(candidate.url)) {
+      uniqueByUrl.set(candidate.url, candidate);
+    }
+  }
+  const deduped = Array.from(uniqueByUrl.values());
+
+  for (const type of unresolvedTypes) {
+    const scored = deduped
+      .map((entry) => ({ ...entry, score: scoreBouncerLineItemText(entry.text, type) }))
+      .filter((entry) => Number.isFinite(entry.score))
+      .sort((a, b) => b.score - a.score || a.text.length - b.text.length);
+    const best = scored.find((entry) => entry.score > 0) || null;
+    if (best) {
+      resolved[type] = best.url;
+      continue;
+    }
+    if (deduped.length === 1) {
+      resolved[type] = deduped[0].url;
+    }
+  }
+
+  return resolved;
+}
+
 async function scrapeBouncerLineItemCreativesAndMetadata(page) {
   return page.evaluate(() => {
     const normalize = (value) => String(value || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
@@ -969,6 +1169,91 @@ async function enrichFromBouncerLineItem(groups, lineItemUrl, options = {}) {
     });
 
     return { groups: outGroups, metadata, enrichedGroups };
+  } finally {
+    if (ownsSession && !options?.keepWindowOpen) {
+      await context.close().catch(() => null);
+    }
+  }
+}
+
+async function enrichFromBouncerCampaignSource(groups, campaignSourceUrl, options = {}) {
+  if (!BOUNCER_LINE_ITEM_ENRICHMENT_ENABLED) {
+    return { groups, metadataByType: {}, enrichedGroups: 0, resolvedLineItems: {} };
+  }
+  if (!campaignSourceUrl || !Array.isArray(groups) || groups.length === 0) {
+    return { groups, metadataByType: {}, enrichedGroups: 0, resolvedLineItems: {} };
+  }
+
+  const sourceUrl = toBouncerViewOnlyUrl(campaignSourceUrl);
+  const presentTypes = Array.from(new Set(
+    groups
+      .map((group) => normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE))
+      .filter((type) => type === 'search' || type === 'trending')
+  ));
+
+  let context = options?.bouncerSession?.context || null;
+  let page = options?.bouncerSession?.page || null;
+  let ownsSession = false;
+  if (!context || !page || page.isClosed()) {
+    const launched = await launchBouncerWindowAtStart();
+    context = launched.context;
+    page = launched.page;
+    ownsSession = true;
+  }
+
+  try {
+    if (isBouncerLineItemUrl(sourceUrl)) {
+      const single = await enrichFromBouncerLineItem(
+        groups,
+        sourceUrl,
+        { bouncerSession: { context, page }, keepWindowOpen: true }
+      );
+      const targetType = presentTypes.length === 1 ? presentTypes[0] : 'search';
+      return {
+        groups: single.groups,
+        metadataByType: single.metadata ? { [targetType]: single.metadata } : {},
+        enrichedGroups: single.enrichedGroups,
+        resolvedLineItems: { [targetType]: sourceUrl }
+      };
+    }
+
+    const typesToResolve = presentTypes.length > 0 ? presentTypes : ['search'];
+    const resolvedLineItems = await resolveBouncerLineItemUrlsByType(page, sourceUrl, typesToResolve);
+    const metadataByType = {};
+    let enrichedGroups = 0;
+    const outGroups = [...groups];
+
+    for (const campaignType of typesToResolve) {
+      const lineItemUrl = resolvedLineItems[campaignType];
+      if (!lineItemUrl) {
+        console.warn(`Could not resolve Bouncer line item URL for campaign_type="${campaignType}" from campaign source URL.`);
+        continue;
+      }
+
+      const indices = [];
+      const scopedGroups = [];
+      outGroups.forEach((group, index) => {
+        if (normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE) !== campaignType) return;
+        indices.push(index);
+        scopedGroups.push(group);
+      });
+      if (scopedGroups.length === 0) continue;
+
+      const scopedResult = await enrichFromBouncerLineItem(
+        scopedGroups,
+        lineItemUrl,
+        { bouncerSession: { context, page }, keepWindowOpen: true }
+      );
+      if (scopedResult?.metadata) {
+        metadataByType[campaignType] = scopedResult.metadata;
+      }
+      enrichedGroups += Number(scopedResult?.enrichedGroups || 0);
+      indices.forEach((originalIndex, scopedIndex) => {
+        outGroups[originalIndex] = scopedResult.groups[scopedIndex];
+      });
+    }
+
+    return { groups: outGroups, metadataByType, enrichedGroups, resolvedLineItems };
   } finally {
     if (ownsSession && !options?.keepWindowOpen) {
       await context.close().catch(() => null);
@@ -1145,8 +1430,8 @@ async function clickFirstVisibleLocator(locator) {
 async function ensureBouncerLoggedIn(page) {
   const url = page.url();
   if (!/\/users\/login\//i.test(url)) return;
-  console.log('Bouncer login required. Waiting for Inventory Explorer after login...');
-  await page.waitForURL(/\/website\/inventory-explorer\//i, { timeout: BOUNCER_LOGIN_WAIT_MS });
+  console.log('Bouncer login required. Waiting for Bouncer app after login...');
+  await page.waitForURL(/\/website\/(?:inventory-explorer|campaigns)\//i, { timeout: BOUNCER_LOGIN_WAIT_MS });
 }
 
 async function ensureBouncerKeywordsGroupsExpanded(page) {
@@ -1322,7 +1607,7 @@ function resolveLookupImpressionGoalForCampaignType(campaignType, goalsByType = 
   return toPositiveInt(TOTAL_IMPRESSIONS, 0);
 }
 
-async function launchBouncerWindowAtStart() {
+async function launchBouncerWindowAtStart(startUrl = BOUNCER_INVENTORY_EXPLORER_URL) {
   const staleLockNames = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'RunningChromeVersion'];
   const clearLocks = async (profileDir) => {
     for (const name of staleLockNames) {
@@ -1355,13 +1640,16 @@ async function launchBouncerWindowAtStart() {
       const context = await chromium.launchPersistentContext(profileDir, base);
       const page = context.pages()[0] || (await context.newPage());
       const url = page.url();
-      if (!/\/website\/inventory-explorer\/|\/users\/login\//i.test(url)) {
-        await page.goto(BOUNCER_INVENTORY_EXPLORER_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
+      const desiredStartUrl = String(startUrl || BOUNCER_INVENTORY_EXPLORER_URL).trim() || BOUNCER_INVENTORY_EXPLORER_URL;
+      if (url === 'about:blank' || !/\/website\/(?:inventory-explorer|campaigns)\/|\/users\/login\//i.test(url)) {
+        await page.goto(desiredStartUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
       } else if (url === 'about:blank') {
-        await page.goto(BOUNCER_INVENTORY_EXPLORER_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
+        await page.goto(desiredStartUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
       }
       if (/\/users\/login\//i.test(page.url())) {
-        console.log('Opened Bouncer window at login. Please log in there before inventory lookup runs.');
+        console.log('Opened Bouncer window at login. Please log in there before campaign enrichment and inventory lookup run.');
+      } else if (/\/website\/campaigns\//i.test(page.url())) {
+        console.log('Opened Bouncer campaign window.');
       } else {
         console.log('Opened Bouncer Inventory Explorer window.');
       }
@@ -1441,13 +1729,25 @@ async function shouldOpenBouncerWindowAtStart() {
       const type = normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE);
       const hasInventory = Array.isArray(group?.keywordInventoryRows) && group.keywordInventoryRows.length > 0;
       const hasTerms = Array.isArray(group?.keywords) && group.keywords.length > 0;
-      if (type === 'search') return !hasInventory && hasTerms;
-      if (type === 'trending') return !hasInventory;
-      return false;
+      return type === 'search' && !hasInventory && hasTerms;
     });
   } catch (error) {
     console.warn(`Bouncer preflight check failed; defaulting to Koddi-only startup. ${String(error?.message || error).split('\n')[0]}`);
     return false;
+  }
+}
+
+async function resolveBouncerStartupUrl() {
+  if (!CAMPAIGN_FILE) return BOUNCER_INVENTORY_EXPLORER_URL;
+  try {
+    const raw = await fs.readFile(CAMPAIGN_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    const reservation = parsed?.reservation || {};
+    const campaignUrl = extractBouncerCampaignUrlFromCampaign(parsed, reservation);
+    if (!campaignUrl) return BOUNCER_INVENTORY_EXPLORER_URL;
+    return toBouncerViewOnlyUrl(campaignUrl);
+  } catch {
+    return BOUNCER_INVENTORY_EXPLORER_URL;
   }
 }
 
@@ -1461,9 +1761,7 @@ async function populateMissingKeywordInventoryFromBouncer(groups, goalsByType = 
       const type = normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE);
       const hasInventory = Array.isArray(group?.keywordInventoryRows) && group.keywordInventoryRows.length > 0;
       const hasTerms = Array.isArray(group?.keywords) && group.keywords.length > 0;
-      if (type === 'search') return !hasInventory && hasTerms;
-      if (type === 'trending') return !hasInventory;
-      return false;
+      return type === 'search' && !hasInventory && hasTerms;
     });
 
   if (lookupCandidates.length === 0) return groups;
@@ -1503,37 +1801,27 @@ async function populateMissingKeywordInventoryFromBouncer(groups, goalsByType = 
       }
       await clearAllBouncerGroups(page);
 
-      const uniqueTerms = type === 'trending'
-        ? [RESERVED_TRENDING_KEYWORD_TOKEN]
-        : dedupeStrings(entries.flatMap(({ group }) => Array.isArray(group.keywords) ? group.keywords : []));
+      const uniqueTerms = dedupeStrings(entries.flatMap(({ group }) => Array.isArray(group.keywords) ? group.keywords : []));
       const inventoryMap = new Map();
       for (const term of uniqueTerms) {
         const count = await lookupSingleTermInventory(page, term);
+        const normalizedTerm = normalizeUiText(term);
         if (count == null) {
           console.warn(`Bouncer lookup returned no inventory for keyword "${term}"; defaulting to 0.`);
-          inventoryMap.set(normalizeUiText(term), 0);
+          inventoryMap.set(normalizedTerm, 0);
           continue;
         }
-        inventoryMap.set(normalizeUiText(term), count);
+        inventoryMap.set(normalizedTerm, count);
         console.log(`Bouncer inventory ${type}:${term}=${count}`);
       }
 
       for (const { group, index } of entries) {
-        const rows = type === 'trending'
-          ? [{
-            term: DEFAULT_TRENDING_KEYWORDS[0],
-            availableInventory: toNonNegativeNumber(
-              inventoryMap.get(normalizeUiText(RESERVED_TRENDING_KEYWORD_TOKEN)),
-              0
-            )
-          }]
-          : dedupeStrings(group.keywords).map((term) => ({
-            term,
-            availableInventory: toNonNegativeNumber(inventoryMap.get(normalizeUiText(term)), 0)
-          }));
+        const rows = dedupeStrings(group.keywords).map((term) => ({
+          term,
+          availableInventory: toNonNegativeNumber(inventoryMap.get(normalizeUiText(term)), 0)
+        }));
         groups[index] = {
           ...group,
-          keywords: type === 'trending' ? [...DEFAULT_TRENDING_KEYWORDS] : group.keywords,
           keywordInventoryRows: rows
         };
       }
@@ -1614,7 +1902,7 @@ async function applyCampaignOverrides(options = {}) {
   }));
 
   if (bouncerCampaignUrl) {
-    const lineItemEnrichment = await enrichFromBouncerLineItem(
+    const lineItemEnrichment = await enrichFromBouncerCampaignSource(
       AD_GROUPS,
       bouncerCampaignUrl,
       { bouncerSession: options?.bouncerSession, keepWindowOpen: true }
@@ -1624,28 +1912,57 @@ async function applyCampaignOverrides(options = {}) {
       console.log(`Backfilled keywords from bouncer_campaign_url for ${lineItemEnrichment.enrichedGroups} ad group(s).`);
     }
 
-    const metadata = lineItemEnrichment?.metadata || null;
-    if (metadata?.startDate) START_DATE = normalizeDate(metadata.startDate, START_DATE);
-    if (metadata?.endDate) END_DATE = normalizeDate(metadata.endDate, END_DATE);
-    if (Number.isFinite(metadata?.totalImpressions) && metadata.totalImpressions > 0) {
-      TOTAL_IMPRESSIONS = metadata.totalImpressions;
-      const hasSearchGroups = AD_GROUPS.some(
-        (g) => normalizeCampaignType(g?.campaignType, DEFAULT_CAMPAIGN_TYPE) === 'search'
-      );
-      if (hasSearchGroups) {
-        IMPRESSION_GOALS_BY_CAMPAIGN_TYPE = {
-          ...IMPRESSION_GOALS_BY_CAMPAIGN_TYPE,
-          search: metadata.totalImpressions
-        };
-      }
+    const resolvedLineItems = lineItemEnrichment?.resolvedLineItems || {};
+    if (resolvedLineItems.search) {
+      console.log(`Resolved Bouncer line item for search: ${resolvedLineItems.search}`);
     }
-    if (Number.isFinite(metadata?.cpm) && metadata.cpm >= 0) {
-      CPM_PER_GROUP = metadata.cpm;
-      AD_GROUPS = AD_GROUPS.map((group) => {
-        const type = normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE);
-        if (type !== 'search' || group?.addedValueGroup) return group;
-        return { ...group, cpm: metadata.cpm };
-      });
+    if (resolvedLineItems.trending) {
+      console.log(`Resolved Bouncer line item for trending: ${resolvedLineItems.trending}`);
+    }
+
+    const metadataByType = lineItemEnrichment?.metadataByType || {};
+    const searchMetadata = metadataByType.search || null;
+    const trendingMetadata = metadataByType.trending || null;
+    const metadataWithDates = [searchMetadata, trendingMetadata].filter(Boolean);
+    const firstMetadata = metadataWithDates[0] || null;
+
+    if (firstMetadata?.startDate) START_DATE = normalizeDate(firstMetadata.startDate, START_DATE);
+    if (firstMetadata?.endDate) END_DATE = normalizeDate(firstMetadata.endDate, END_DATE);
+
+    const applyTypeMetadata = (campaignType, metadata) => {
+      if (!metadata) return false;
+      let updatedGoals = false;
+      if (Number.isFinite(metadata.totalImpressions) && metadata.totalImpressions > 0) {
+        const hasTypeGroups = AD_GROUPS.some(
+          (g) => normalizeCampaignType(g?.campaignType, DEFAULT_CAMPAIGN_TYPE) === campaignType
+        );
+        if (hasTypeGroups) {
+          IMPRESSION_GOALS_BY_CAMPAIGN_TYPE = {
+            ...IMPRESSION_GOALS_BY_CAMPAIGN_TYPE,
+            [campaignType]: metadata.totalImpressions
+          };
+          updatedGoals = true;
+        }
+      }
+      if (Number.isFinite(metadata.cpm) && metadata.cpm >= 0) {
+        CPM_PER_GROUP = metadata.cpm;
+        AD_GROUPS = AD_GROUPS.map((group) => {
+          const type = normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE);
+          if (type !== campaignType || group?.addedValueGroup) return group;
+          return { ...group, cpm: metadata.cpm };
+        });
+      }
+      return updatedGoals;
+    };
+
+    const searchGoalsUpdated = applyTypeMetadata('search', searchMetadata);
+    const trendingGoalsUpdated = applyTypeMetadata('trending', trendingMetadata);
+    if (searchGoalsUpdated || trendingGoalsUpdated) {
+      const goalsTotal = Object.values(IMPRESSION_GOALS_BY_CAMPAIGN_TYPE)
+        .reduce((sum, value) => sum + toPositiveInt(value, 0), 0);
+      if (goalsTotal > 0) {
+        TOTAL_IMPRESSIONS = goalsTotal;
+      }
     }
   }
 
@@ -1678,7 +1995,7 @@ async function applyCampaignOverrides(options = {}) {
     ));
 
     for (const summary of allocation.summaries) {
-      if (modeForTypeGoals === 'even') {
+      if (summary.strategy === 'even') {
         console.log(
           `Using impression_goals_by_campaign_type for campaign_type=${summary.key}: goal=${summary.goal}, `
           + `groups=${summary.groupCount}, even splits=${summary.splits.join(', ')}`
@@ -3642,8 +3959,9 @@ async function main() {
   let bouncerSession = null;
   let bouncerContext = null;
   if (openBouncerAtStart) {
-    console.log('Detected search keywords without available_inventory; running Bouncer preprocessing first, then opening Koddi.');
-    bouncerSession = await launchBouncerWindowAtStart();
+    console.log('Detected Bouncer enrichment/lookup needs; opening Bouncer first, then opening Koddi.');
+    const bouncerStartupUrl = await resolveBouncerStartupUrl();
+    bouncerSession = await launchBouncerWindowAtStart(bouncerStartupUrl);
     bouncerContext = bouncerSession?.context || null;
   } else {
     console.log('Keyword inventory already provided (or not required); opening Koddi window only.');
