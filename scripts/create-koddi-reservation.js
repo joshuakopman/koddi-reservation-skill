@@ -55,6 +55,7 @@ const BOUNCER_PROFILE_DIR = process.env.BOUNCER_PROFILE_DIR || `${PROFILE_DIR}-b
 const BOUNCER_LOGIN_WAIT_MS = Number(process.env.BOUNCER_LOGIN_WAIT_MS || 20 * 60 * 1000);
 const BOUNCER_CAMPAIGN_URL = process.env.BOUNCER_CAMPAIGN_URL || '';
 const BOUNCER_LINE_ITEM_ENRICHMENT_ENABLED = process.env.BOUNCER_LINE_ITEM_ENRICHMENT_ENABLED !== '0';
+const RESERVE_WIZARD_URL = process.env.RESERVE_WIZARD_URL || 'https://k1-uat.koddi.app/#/clients/3500/reservations/reserve';
 
 const ADOPS_PRODUCT_RULES = {
   search: {
@@ -2593,7 +2594,19 @@ async function gotoAdGroupsStepFromReservations(page) {
       await page.waitForTimeout(500);
       createClicked = await clickCreateReservation(page, 12000);
     }
-    if (!createClicked) return false;
+    if (!createClicked) {
+      console.warn('Could not activate + Create on Reservations; attempting direct reserve-wizard navigation.');
+      await page.goto(RESERVE_WIZARD_URL, { waitUntil: 'domcontentloaded' }).catch(() => null);
+      await page.waitForTimeout(500);
+      const reachedReserveWizard = /\/reservations\/reserve/i.test(page.url())
+        || await page.getByText(/Targeted Reservation/i).first().isVisible().catch(() => false)
+        || await page
+          .locator('input[data-test="reservation-reserve.reservation_name-field--input"]')
+          .first()
+          .isVisible()
+          .catch(() => false);
+      if (!reachedReserveWizard) return false;
+    }
   }
 
   let reachedDetails = await page
@@ -4084,7 +4097,19 @@ async function main() {
   const hasAdGroupCreate = await page.locator('[data-test="create-card--Ad Groups"], button:has-text("New Ad Groups")').first().isVisible().catch(() => false);
   if (!hasAdGroupCreate) {
     console.log('Ad group controls not found on current page; attempting to navigate from Reservations via Create.');
-    const moved = await gotoAdGroupsStepFromReservations(page);
+    let moved = false;
+    const navAttemptMax = 3;
+    for (let navAttempt = 1; navAttempt <= navAttemptMax && !moved; navAttempt += 1) {
+      if (navAttempt > 1) {
+        console.warn(`Navigation hiccup detected; retrying Reservations -> Create flow (attempt ${navAttempt}/${navAttemptMax}).`);
+        await page.goto(ADGROUPS_URL, { waitUntil: 'domcontentloaded' }).catch(() => null);
+        await page.waitForTimeout(500);
+      }
+      moved = await gotoAdGroupsStepFromReservations(page);
+      if (!moved) {
+        await page.waitForTimeout(500);
+      }
+    }
     if (!moved) {
       await captureDiagnostics(page, 'navigation-to-adgroups-failed');
       throw new Error('Could not navigate from reservation details to ad groups page.');
