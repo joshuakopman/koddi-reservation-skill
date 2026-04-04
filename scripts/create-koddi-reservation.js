@@ -1441,7 +1441,9 @@ async function shouldOpenBouncerWindowAtStart() {
       const type = normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE);
       const hasInventory = Array.isArray(group?.keywordInventoryRows) && group.keywordInventoryRows.length > 0;
       const hasTerms = Array.isArray(group?.keywords) && group.keywords.length > 0;
-      return type === 'search' && !hasInventory && hasTerms;
+      if (type === 'search') return !hasInventory && hasTerms;
+      if (type === 'trending') return !hasInventory;
+      return false;
     });
   } catch (error) {
     console.warn(`Bouncer preflight check failed; defaulting to Koddi-only startup. ${String(error?.message || error).split('\n')[0]}`);
@@ -1459,11 +1461,13 @@ async function populateMissingKeywordInventoryFromBouncer(groups, goalsByType = 
       const type = normalizeCampaignType(group?.campaignType, DEFAULT_CAMPAIGN_TYPE);
       const hasInventory = Array.isArray(group?.keywordInventoryRows) && group.keywordInventoryRows.length > 0;
       const hasTerms = Array.isArray(group?.keywords) && group.keywords.length > 0;
-      return type === 'search' && !hasInventory && hasTerms;
+      if (type === 'search') return !hasInventory && hasTerms;
+      if (type === 'trending') return !hasInventory;
+      return false;
     });
 
   if (lookupCandidates.length === 0) return groups;
-  console.log(`Missing keyword inventory detected for ${lookupCandidates.length} search ad group(s); running Bouncer lookup.`);
+  console.log(`Missing keyword inventory detected for ${lookupCandidates.length} ad group(s); running Bouncer lookup.`);
 
   let context = options?.bouncerSession?.context || null;
   let page = options?.bouncerSession?.page || null;
@@ -1499,7 +1503,9 @@ async function populateMissingKeywordInventoryFromBouncer(groups, goalsByType = 
       }
       await clearAllBouncerGroups(page);
 
-      const uniqueTerms = dedupeStrings(entries.flatMap(({ group }) => Array.isArray(group.keywords) ? group.keywords : []));
+      const uniqueTerms = type === 'trending'
+        ? [RESERVED_TRENDING_KEYWORD_TOKEN]
+        : dedupeStrings(entries.flatMap(({ group }) => Array.isArray(group.keywords) ? group.keywords : []));
       const inventoryMap = new Map();
       for (const term of uniqueTerms) {
         const count = await lookupSingleTermInventory(page, term);
@@ -1513,12 +1519,21 @@ async function populateMissingKeywordInventoryFromBouncer(groups, goalsByType = 
       }
 
       for (const { group, index } of entries) {
-        const rows = dedupeStrings(group.keywords).map((term) => ({
-          term,
-          availableInventory: toNonNegativeNumber(inventoryMap.get(normalizeUiText(term)), 0)
-        }));
+        const rows = type === 'trending'
+          ? [{
+            term: DEFAULT_TRENDING_KEYWORDS[0],
+            availableInventory: toNonNegativeNumber(
+              inventoryMap.get(normalizeUiText(RESERVED_TRENDING_KEYWORD_TOKEN)),
+              0
+            )
+          }]
+          : dedupeStrings(group.keywords).map((term) => ({
+            term,
+            availableInventory: toNonNegativeNumber(inventoryMap.get(normalizeUiText(term)), 0)
+          }));
         groups[index] = {
           ...group,
+          keywords: type === 'trending' ? [...DEFAULT_TRENDING_KEYWORDS] : group.keywords,
           keywordInventoryRows: rows
         };
       }
@@ -2872,16 +2887,17 @@ async function verifyExactSelectedKeywords(page, requestedKeywords = [], opts = 
 async function setKeywordsWithRetry(page, targetCount = 20, attempts = 3, requestedKeywords = [], opts = {}) {
   const targetGroupIndex = Number.isInteger(opts.targetGroupIndex) ? opts.targetGroupIndex : 0;
   const adgroupNum = Number.isInteger(opts.adgroupNum) ? opts.adgroupNum : null;
-  const expectedSelectionCount = dedupeStrings(requestedKeywords).slice(0, targetCount).length;
+  const expectedKeywords = dedupeStrings(requestedKeywords).slice(0, targetCount);
+  const expectedSelectionCount = expectedKeywords.length;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const ok = await setKeywords(page, targetCount, requestedKeywords, { targetGroupIndex, adgroupNum });
+    const ok = await setKeywords(page, targetCount, expectedKeywords, { targetGroupIndex, adgroupNum });
     const selectedCount = await getKeywordSelectionCount(page, targetGroupIndex);
     if (expectedSelectionCount > 0) {
       // Fast path: when Koddi reports the exact requested count selected, move on.
       if (selectedCount === expectedSelectionCount) return true;
       const exact = await verifyExactSelectedKeywords(
         page,
-        dedupeStrings(requestedKeywords).slice(0, targetCount),
+        expectedKeywords,
         { targetGroupIndex, adgroupNum }
       );
       if (exact.ok) return true;

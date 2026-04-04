@@ -206,12 +206,15 @@ $koddi-reservation-campaign-builder
 Please generate a valid campaign JSON for the Koddi reservation automation, then run the skill using that JSON and leave the browser open at the end.
 
 Requirements:
-- reservation.name: Old El Paso Search Rotational (Bouncer Source)
+- reservation.name: Old El Paso Search + Trending Rotational (Bouncer Source)
 - reservation.advertiser_name: Demo Advertiser
 - reservation.impression_allocation_mode: keyword_inventory_proportional_by_campaign_type
+- reservation.impression_goals_by_campaign_type:
+  - search: 2,272,729
+  - trending: 3,125,000
 - reservation.bouncer_campaign_url: https://bouncer.giphy.tech/website/campaigns/d6d8222f-f55d-4103-afdf-5120e2086d23/line_items/2322/
 - Source reservation values from Bouncer campaign page when available:
-  - start_date, end_date, total_impressions, and search CPM
+  - start_date, end_date, total_impressions, and campaign-type CPMs (search/trending)
 
 Ad groups (search):
 - name: Yeehaw!
@@ -234,6 +237,29 @@ Ad groups (search):
   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-PLmRUJ5gJy9woVkSPz
 - name: Feed me!
   campaign_type: search
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
+
+Ad groups (trending):
+- name: Yeehaw!
+  campaign_type: trending
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-NRsLUVqZEwujd4NiuE
+- name: Taco Tuesday!
+  campaign_type: trending
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-gR7pHUpITamahKVY2L
+- name: On my way!
+  campaign_type: trending
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VRmInwz0lyQo25TTwS
+- name: Gimme that!
+  campaign_type: trending
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-dBP8vDQjz9xojpCPVD
+- name: It's taco time
+  campaign_type: trending
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-25pbGxTTDlJlZiQ9Px
+- name: Happy Cinco de Mayo!
+  campaign_type: trending
+  gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-PLmRUJ5gJy9woVkSPz
+- name: Feed me!
+  campaign_type: trending
   gif_url: https://giphy.com/gifs/OldElPaso-cinco-de-mayo-old-el-paso-taco-shells-VPMiVMq3nFdBrULMDC
 ```
 
